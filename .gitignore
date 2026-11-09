@@ -1,0 +1,23 @@
+notes
+.env
+.DS_Store
+._*
+
+# Data and anything derived from it must never reach GitHub (USC licence, health data)
+/data/
+*.wav
+*.flac
+*.tar.gz
+cache/
+caches/
+clips/
+checkpoints/
+outputs/
+runs/
+scores/
+wandb/
+*.pt
+*.safetensors
+__pycache__/
+.ipynb_checkpoints/
+slurm-*.out
