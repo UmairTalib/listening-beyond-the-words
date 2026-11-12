@@ -1,0 +1,13 @@
+# Model snapshots of the pilot, each pinned to a Hugging Face commit.
+# Fetch them once on an OMNI login node (jobs never download):
+#   "$UV_PROJECT_ENVIRONMENT/bin/python" scripts/fetch_models.py
+# Jobs then load them offline from $LBW_WORKSPACE/hf.
+
+voxtral:
+  repo_id: mistralai/Voxtral-Mini-3B-2507
+  revision: "3060fe34b35ba5d44202ce9ff3c097642914f8f3"
+  # Transformers weights only. consolidated.safetensors and params.json hold the
+  # same model in Mistral's own format (9.3 GB more).
+  ignore:
+    - consolidated.safetensors
+    - params.json
