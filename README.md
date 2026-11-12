@@ -15,7 +15,7 @@ Audio large language models (audio LLMs) can listen to an interview and answer q
 
 ## The idea
 
-This project adds a new training objective, the **counterfactual prosody gain (CPG)**, to standard LoRA fine-tuning. For each person the model sees three versions of the same speech:
+This project adds a new training objective, the **counterfactual paralinguistic gain (CPG)**, to standard LoRA fine-tuning. For each person the model sees three versions of the same speech:
 
 | View | What it contains |
 | --- | --- |
@@ -48,15 +48,31 @@ where $\hat z$ are standardised per-bag scores (running statistics with stop-gra
 - [ ] External test on held-out E-DAIC sessions
 - [ ] Thesis and paper
 
+## Results
+
+No results yet. The pilot starts on 2026-11-16. Its aggregate results and the go / no-go decision will appear here and in `reports/pilot/`.
+
 ## Repository layout
 
 ```
 src/listening_beyond_words/   library code (data pipeline, views, CPG loss, training, evaluation)
-tests/                        unit tests (loss values, gradients, data splits)
-configs/                      experiment configurations
-scripts/slurm/                job scripts for the OMNI cluster
-docs/                         methodology, pilot plan, proposal and reference scripts
+tests/                        unit tests on synthetic data (loss values, gradients, data splits)
+configs/                      experiment configurations, one YAML file per experiment
+scripts/                      shell scripts for OMNI; scripts/slurm/ holds the Slurm job files
+docs/                         pilot protocol, engineering conventions and glossary
 ```
+
+## Development
+
+The environment is locked with [uv](https://docs.astral.sh/uv/) and uses Python 3.12. On a laptop:
+
+```bash
+make env      # create .venv with the CPU build of PyTorch
+make hooks    # install the git hooks
+make check    # format check, lint, type check and tests, as in CI
+```
+
+On the OMNI cluster, `scripts/setup_omni_env.sh` builds the GPU environment in the workspace. The rules for code, configs, data, Slurm jobs, commits and releases are in [`docs/engineering_conventions.md`](docs/engineering_conventions.md).
 
 ## Data and ethics
 
@@ -64,8 +80,8 @@ The interview data are distributed by USC ICT under a research licence and conta
 
 ## Documentation
 
-See [`docs/README.md`](docs/README.md) for the methodology, the pilot plan and the analysis plan.
+See [`docs/README.md`](docs/README.md) for the pilot protocol, the engineering conventions and a glossary.
 
-## License
+## Licence
 
-To be decided.
+© 2026 Umair Talib. All rights reserved until this repository is made public. Nothing here licenses the DAIC-WOZ or E-DAIC data: USC ICT grants access to them under its own agreement.
