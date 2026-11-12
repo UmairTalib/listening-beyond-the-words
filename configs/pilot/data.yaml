@@ -21,8 +21,8 @@ participant_lines:
   sha256: b0fefb711b148e641664e79392c977a265b4439d195ba00d6a2d876070503a82
 
 word_times:
-  run: null # derived/word_times/run-<job id>, written by scripts/align_words.py
-  sha256: null
+  run: derived/word_times/run-12430801 # written by scripts/align_words.py
+  sha256: c62ddab7a5c7f97a20969b662b10203a0045da0e900c31beddf7b4bca7707ff9
 
 segments:
   run: null # derived/segments/run-<UTC time>, written by scripts/build_segments.py
