@@ -5,7 +5,8 @@ The E-DAIC transcripts hold the participant's lines, but the virtual interviewer
 speaker-verification model can tell her apart. The speech between the
 participant's lines, which is mostly Ellie, gives her voice profile, and the
 participant's lines give theirs. Each short window of speech is then scored by
-which of the two profiles it is closer to.
+which of the two profiles it is closer to. ``line_decisions`` turns the scores
+into the pilot's rule for which participant lines are kept.
 
 Spans are ``(start, end)`` pairs in seconds.
 """
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import numpy as np
+import pandas as pd
 
 Span = tuple[float, float]
 
@@ -24,6 +26,7 @@ HOP_SECONDS: Final = 0.75
 MIN_WINDOW_SECONDS: Final = 0.75
 MIN_GAP_SECONDS: Final = 0.5
 MIN_PROFILE_WINDOWS: Final = 10
+DROP_SHARE: Final = 0.5
 VAD_OPTIONS: Final = {
     "threshold": 0.5,
     "min_speech_duration_ms": 250,
@@ -222,6 +225,39 @@ def interviewer_scores(
     """
     u = unit(embeddings)
     return np.asarray(u @ interviewer - u @ participant)
+
+
+def line_decisions(
+    lines: pd.DataFrame, windows: pd.DataFrame, drop_share: float = DROP_SHARE
+) -> pd.DataFrame:
+    """Decide which participant lines the pilot keeps.
+
+    A line is dropped if at least ``drop_share`` of its speech windows score above 0
+    (closer to the interviewer than to the participant), or if it contains a known
+    interviewer phrase. A line without any speech window is judged by the phrase alone.
+
+    Args:
+        lines: One row per transcript line, with the columns ``session``, ``line``
+            and ``phrase`` (True if the line contains an interviewer phrase).
+        windows: Scored windows as written by ``scripts/flag_interviewer.py``, with
+            the columns ``session``, ``kind``, ``line`` and ``score``.
+        drop_share: Share of a line's windows above 0 from which it is dropped.
+
+    Returns:
+        ``lines`` with two more columns: ``share_above_0`` (NaN for a line without a
+        speech window) and ``drop``.
+    """
+    scored = windows[(windows["kind"] == "line") & windows["score"].notna()]
+    share = (
+        (scored["score"] > 0)
+        .groupby([scored["session"], scored["line"]])
+        .mean()
+        .rename("share_above_0")
+        .reset_index()
+    )
+    decided = lines.merge(share, on=["session", "line"], how="left", validate="one_to_one")
+    decided["drop"] = (decided["share_above_0"] >= drop_share) | decided["phrase"].astype(bool)
+    return decided
 
 
 def speech_regions(audio: np.ndarray, sampling_rate: int = SAMPLING_RATE) -> list[Span]:

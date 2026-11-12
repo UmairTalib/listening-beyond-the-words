@@ -1,0 +1,12 @@
+# Data settings of the pilot; see docs/pilot_protocol.md, section "Speech used".
+# Paths are relative to the workspace root. Built files are pinned by their SHA-256,
+# and steps stop when a file no longer matches.
+
+labels:
+  run: null # derived/labels/run-<UTC time>, written by scripts/build_labels.py
+  sha256: null
+
+interviewer_filter:
+  run: derived/interviewer/run-12429618 # written by scripts/flag_interviewer.py
+  drop_share: 0.5 # drop a line when this share of its speech windows sounds like the interviewer
+  drop_interviewer_phrases: true # drop a line that contains a known interviewer phrase

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from listening_beyond_words import interviewer as iv
@@ -75,6 +76,36 @@ def test_session_profiles_fall_back_to_the_global_profile_without_enough_gaps() 
     gap_windows = sample(rng, interviewer, 5)
     own, _ = iv.session_profiles(line_windows, gap_windows, interviewer, min_windows=10)
     assert np.allclose(own, interviewer)
+
+
+def test_line_decisions_drop_interviewer_lines_and_phrase_lines() -> None:
+    lines = pd.DataFrame(
+        {
+            "session": [9001] * 4,
+            "line": [0, 1, 2, 3],
+            "phrase": [False, False, True, False],
+        }
+    )
+    windows = pd.DataFrame(
+        {
+            "session": [9001] * 7,
+            "kind": ["line", "line", "line", "line", "line", "gap", "gap"],
+            "line": [0, 0, 0, 1, 1, -1, -1],
+            "score": [0.3, 0.1, -0.2, -0.4, -0.1, 0.5, 0.6],
+        }
+    )
+    decided = iv.line_decisions(lines, windows).set_index("line")
+    assert decided["drop"].to_dict() == {0: True, 1: False, 2: True, 3: False}
+    assert decided.loc[0, "share_above_0"] == pytest.approx(2 / 3)
+    assert np.isnan(decided.loc[2, "share_above_0"])
+
+
+def test_line_decisions_keep_a_line_below_the_drop_share() -> None:
+    lines = pd.DataFrame({"session": [9001], "line": [0], "phrase": [False]})
+    windows = pd.DataFrame(
+        {"session": [9001] * 3, "kind": ["line"] * 3, "line": [0] * 3, "score": [0.2, -0.1, -0.3]}
+    )
+    assert not iv.line_decisions(lines, windows)["drop"].iloc[0]
 
 
 @pytest.fixture(scope="module")

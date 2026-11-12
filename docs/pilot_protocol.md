@@ -15,6 +15,15 @@ This page fixes how the pilot runs and how its result is read. It is committed h
 | Also reported | B1 − B0 and CPG − B1, values per round, zero-shot AUROC, Spearman correlation with the PHQ-8 totals |
 | Compute | About 100 V100 GPU-hours |
 
+## Speech used
+
+Fixed on 12 November 2026, before any training. The settings are in `configs/pilot/data.yaml`.
+
+- **Transcripts.** The pilot uses the E-DAIC transcripts, because the DAIC-WOZ human transcripts had not arrived when the segments were built. They come from automatic speech recognition, hold the participant's lines and contain almost no fillers such as "um" and "uh". The words-only view `x1` therefore has no fillers, while `x0` keeps them. This is reported as a limitation.
+- **Labels.** A participant is positive if the PHQ-8 total in the official split files is 10 or more. For every pilot participant this total equals the sum of the eight item scores. 57 of the 189 participants are positive. The binary column disagrees for 15 participants and is not used. Gender comes from the split files.
+- **Interviewer filter.** The interviewer is mostly inaudible in these recordings, but leaks into some participant lines, and an assistant can be heard at the start of a few sessions. A transcript line is dropped if at least half of its speech, cut into 1.5 s windows, sounds more like the interviewer than like the participant to a speaker-verification model (WavLM x-vectors, pinned in `configs/pilot/models.yaml`), or if it contains one of ten known interviewer phrases. In a blind listening check of 35 lines, another voice was heard in an estimated 3.6% of all lines before the filter and in about 1.3% after it. The rest is reported as a limitation.
+- **Checks before training.** The share of dropped words must not differ between PHQ-8-positive and PHQ-8-negative participants (two-sided Mann–Whitney test, p ≥ 0.05); otherwise the filter is reviewed before any training. Twenty random segments are listened to before training; if another voice is heard in more than two of them, the filter is reviewed.
+
 ## Fixed settings
 
 These values are fixed before the first training run. Only the two allowed changes below may alter m or the number of epochs.
