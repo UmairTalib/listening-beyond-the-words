@@ -85,7 +85,12 @@ def main() -> None:
     lines = transcript_lines(workspace.edaic / "sessions")
     if not filter_cfg["drop_interviewer_phrases"]:
         lines["phrase"] = False
-    decided = line_decisions(lines, pd.read_parquet(windows_path), drop_share=drop_share)
+    decided = line_decisions(
+        lines,
+        pd.read_parquet(windows_path),
+        drop_share=drop_share,
+        unclear_min_seconds=filter_cfg["drop_unclear_min_seconds"],
+    )
     output = run_dir / "lines.parquet"
     decided.to_parquet(output, index=False)
     digest = sha256_file(output)
@@ -101,6 +106,7 @@ def main() -> None:
         "lines_dropped": int(decided["drop"].sum()),
         "lines_dropped_by_voice": by_voice,
         "lines_with_phrase": int(decided["phrase"].sum()),
+        "lines_unclear": int(decided["unclear"].sum()),
         "words": int(words.sum()),
         "words_dropped": int(dropped.sum()),
         "segments_possible": int((kept // SEGMENT_WORDS).sum()),
@@ -109,7 +115,7 @@ def main() -> None:
     print(
         f"lines {counts['lines']}: dropped {counts['lines_dropped']}"
         f" ({counts['lines_dropped'] / counts['lines']:.3f}); by voice {by_voice},"
-        f" with a phrase {counts['lines_with_phrase']}"
+        f" with a phrase {counts['lines_with_phrase']}, unclear {counts['lines_unclear']}"
     )
     print(
         f"words {counts['words']}: dropped {counts['words_dropped']}"

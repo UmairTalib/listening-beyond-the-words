@@ -10,3 +10,4 @@ interviewer_filter:
   run: derived/interviewer/run-12429618 # written by scripts/flag_interviewer.py
   drop_share: 0.5 # drop a line when this share of its speech windows sounds like the interviewer
   drop_interviewer_phrases: true # drop a line that contains a known interviewer phrase
+  drop_unclear_min_seconds: 1.5 # drop a line this long that has no 0.75 s of detected speech

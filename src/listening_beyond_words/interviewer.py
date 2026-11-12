@@ -27,6 +27,7 @@ MIN_WINDOW_SECONDS: Final = 0.75
 MIN_GAP_SECONDS: Final = 0.5
 MIN_PROFILE_WINDOWS: Final = 10
 DROP_SHARE: Final = 0.5
+UNCLEAR_MIN_SECONDS: Final = 1.5
 VAD_OPTIONS: Final = {
     "threshold": 0.5,
     "min_speech_duration_ms": 250,
@@ -228,24 +229,33 @@ def interviewer_scores(
 
 
 def line_decisions(
-    lines: pd.DataFrame, windows: pd.DataFrame, drop_share: float = DROP_SHARE
+    lines: pd.DataFrame,
+    windows: pd.DataFrame,
+    drop_share: float = DROP_SHARE,
+    unclear_min_seconds: float | None = UNCLEAR_MIN_SECONDS,
 ) -> pd.DataFrame:
     """Decide which participant lines the pilot keeps.
 
     A line is dropped if at least ``drop_share`` of its speech windows score above 0
-    (closer to the interviewer than to the participant), or if it contains a known
-    interviewer phrase. A line without any speech window is judged by the phrase alone.
+    (closer to the interviewer than to the participant), if it contains a known
+    interviewer phrase, or if it lasts at least ``unclear_min_seconds`` but has no
+    speech window at all: no stretch of clearly detected speech, so neither the
+    model nor a listener has judged it. Shorter lines without a window, such as a
+    quick "yeah", are kept.
 
     Args:
-        lines: One row per transcript line, with the columns ``session``, ``line``
-            and ``phrase`` (True if the line contains an interviewer phrase).
+        lines: One row per transcript line, with the columns ``session``, ``line``,
+            ``start``, ``end`` and ``phrase`` (True if the line contains an
+            interviewer phrase).
         windows: Scored windows as written by ``scripts/flag_interviewer.py``, with
             the columns ``session``, ``kind``, ``line`` and ``score``.
         drop_share: Share of a line's windows above 0 from which it is dropped.
+        unclear_min_seconds: Length from which a line without a speech window is
+            dropped; None keeps all such lines.
 
     Returns:
-        ``lines`` with two more columns: ``share_above_0`` (NaN for a line without a
-        speech window) and ``drop``.
+        ``lines`` with three more columns: ``share_above_0`` (NaN for a line without
+        a speech window), ``unclear`` and ``drop``.
     """
     scored = windows[(windows["kind"] == "line") & windows["score"].notna()]
     share = (
@@ -256,7 +266,15 @@ def line_decisions(
         .reset_index()
     )
     decided = lines.merge(share, on=["session", "line"], how="left", validate="one_to_one")
-    decided["drop"] = (decided["share_above_0"] >= drop_share) | decided["phrase"].astype(bool)
+    long_enough = (decided["end"] - decided["start"]) >= (
+        unclear_min_seconds if unclear_min_seconds is not None else float("inf")
+    )
+    decided["unclear"] = decided["share_above_0"].isna() & long_enough
+    decided["drop"] = (
+        (decided["share_above_0"] >= drop_share)
+        | decided["phrase"].astype(bool)
+        | decided["unclear"]
+    )
     return decided
 
 

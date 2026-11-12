@@ -83,6 +83,8 @@ def test_line_decisions_drop_interviewer_lines_and_phrase_lines() -> None:
         {
             "session": [9001] * 4,
             "line": [0, 1, 2, 3],
+            "start": [0.0, 3.5, 6.0, 7.0],
+            "end": [3.0, 5.0, 6.5, 7.6],
             "phrase": [False, False, True, False],
         }
     )
@@ -101,11 +103,37 @@ def test_line_decisions_drop_interviewer_lines_and_phrase_lines() -> None:
 
 
 def test_line_decisions_keep_a_line_below_the_drop_share() -> None:
-    lines = pd.DataFrame({"session": [9001], "line": [0], "phrase": [False]})
+    lines = pd.DataFrame(
+        {"session": [9001], "line": [0], "start": [0.0], "end": [3.0], "phrase": [False]}
+    )
     windows = pd.DataFrame(
         {"session": [9001] * 3, "kind": ["line"] * 3, "line": [0] * 3, "score": [0.2, -0.1, -0.3]}
     )
     assert not iv.line_decisions(lines, windows)["drop"].iloc[0]
+
+
+def test_line_decisions_drop_a_long_line_without_detected_speech() -> None:
+    lines = pd.DataFrame(
+        {
+            "session": [9001] * 2,
+            "line": [0, 1],
+            "start": [0.0, 5.0],
+            "end": [2.0, 5.6],
+            "phrase": [False, False],
+        }
+    )
+    windows = pd.DataFrame(
+        {
+            "session": pd.Series([], dtype="int64"),
+            "kind": pd.Series([], dtype="object"),
+            "line": pd.Series([], dtype="int64"),
+            "score": pd.Series([], dtype="float64"),
+        }
+    )
+    decided = iv.line_decisions(lines, windows)
+    assert decided["unclear"].tolist() == [True, False]
+    assert decided["drop"].tolist() == [True, False]
+    assert not iv.line_decisions(lines, windows, unclear_min_seconds=None)["drop"].any()
 
 
 @pytest.fixture(scope="module")
