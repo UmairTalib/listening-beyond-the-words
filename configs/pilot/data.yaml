@@ -17,8 +17,8 @@ broken_timestamps:
   max_words_per_second: 1.0 # ... with fewer words per second has broken timestamps: dropped
 
 participant_lines:
-  run: derived/participant_lines/run-20261112T110028Z # written by scripts/select_lines.py
-  sha256: 35022a5717336c56239b6e47c5009f5547c032319ecb3548958e5f476f2f3223
+  run: derived/participant_lines/run-20261112T111930Z # written by scripts/select_lines.py
+  sha256: b0fefb711b148e641664e79392c977a265b4439d195ba00d6a2d876070503a82
 
 word_times:
   run: null # derived/word_times/run-<job id>, written by scripts/align_words.py
@@ -29,5 +29,5 @@ segments:
   sha256: null
 
 partitions:
-  run: null # derived/partitions/run-<UTC time>, written by scripts/build_partitions.py
-  sha256: null
+  run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py
+  sha256: ec44630d9e1f95aa7ba05db7005c960f42fbd5b456921cd8a314e34cf1fb4ca2
