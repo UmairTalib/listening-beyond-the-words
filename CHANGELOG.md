@@ -15,5 +15,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Settings module that reads every data path from `LBW_WORKSPACE`.
 - Slurm helpers: a shared job setup and a submit script that keeps logs in the workspace.
 - Script that sets up the GPU environment on OMNI and checks the PyTorch build.
-- Download script that fetches E-DAIC straight into the OMNI workspace and checks sizes and checksums.
+- Download script that fetches E-DAIC straight into the OMNI workspace, checks file sizes and records SHA-256 checksums.
 - Unpack job for the audio and transcripts of the 189 pilot sessions (300–492).

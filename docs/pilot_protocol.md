@@ -10,10 +10,29 @@ This page fixes how the pilot runs and how its result is read. It is agreed with
 | Data | E-DAIC sessions 300–492, 189 participants. Sessions 600–718 stay unopened. |
 | Arms | Zero-shot Voxtral (scoring only), B0, B1 and CPG |
 | Design | 2 rounds × 5 folds, split by participant, stratified by label and gender. 30 training runs. |
-| Test views | `x0` (original audio) and `rev` (reversed speech, words removed) |
+| Test views | `x0` (original audio) and `rev` (each 250 ms window played backwards, so the words are removed) |
 | Main numbers | Δ = CPG − B0 in mean per-fold AUROC on each test view, over 10 fold-runs, with 80% and 95% intervals |
 | Also reported | B1 − B0 and CPG − B1, values per round, zero-shot AUROC, Spearman correlation with the PHQ-8 totals |
 | Compute | About 100 V100 GPU-hours |
+
+## Fixed settings
+
+These values are fixed before the first training run. Only the two allowed changes below may alter m or the number of epochs.
+
+| Setting | Value |
+| --- | --- |
+| Model | Voxtral Mini 3B at a pinned revision, fp16 with fp32 master weights and loss scaling. The audio encoder is frozen and its output cached once per view. |
+| LoRA | r = 16, α = 32, dropout 0.05 on q, k, v, o, gate, up and down |
+| Optimiser | AdamW, learning rate 1.0e-4 (adapter 2.0e-5), cosine schedule with 5% warm-up, weight decay 0.01, gradient clip 1.0 |
+| Epochs | 3; the final checkpoint is used |
+| Prompt | "Based on this speech, does the speaker have elevated depressive symptoms? Answer Yes or No." |
+| Score | z = logit("Yes") − logit("No"); a participant's score is the mean z over their segments |
+| Segments and bags | Exactly 40 words, 300 ms gaps. A bag is 4 segments of one participant; 4 bags per step (2 positive, 2 negative); class weights 1. |
+| Views | `x0` original; `x1` re-voiced (Kokoro-82M, same gender, words only); `x2` muffled (400 Hz low-pass); `rev` for testing only |
+| Loss | CE(x0) + 0.25 CE(x1) + 0.5 CE(x2) + λG · gain term |
+| Gain term | Margin m = 0.3, softness s = 0.1, λG = 1 ramped up over the first 20% of steps, computed in fp32 |
+| Word check (F4) | faster-whisper large-v3 and wav2vec2-large-960h-lv60-self |
+| Intervals | Participant bootstrap stratified by label, 10,000 resamples |
 
 ## Feasibility checks
 
@@ -22,10 +41,10 @@ All five checks must pass before the main numbers are read. A failed check is fi
 | Check | Passes if |
 | --- | --- |
 | F1 Runs finish | All 30 runs finish with no NaN or inf in the loss or the gradients |
-| F2 Gain term active | In the CPG runs, the hinge is active on 20–80% of bags in epochs 2 and 3, after at most the one allowed change of m |
+| F2 Gain term active | In the CPG runs, the hinge is active on 20–80% of bags in epochs 2 and 3, after at most the one allowed change of m. If it is still outside 20–80%, this is reported as a finding and decided with the supervisor. |
 | F3 B0 learns | B0's mean AUROC on `x0` is at least 0.60. Below that, the fallback for a B0 near chance (a linear readout head) is discussed with the supervisor before any effect is read |
-| F4 Words removed | On `rev`, both ASR systems reach a WER of at least 0.80, and a text classifier on their output predicts the label with an AUROC of at most 0.60. Otherwise the whole-turn backup is used, checked the same way |
-| F5 Cost | A three-view run takes at most 4 GPU-hours |
+| F4 Words removed | On `rev`, both ASR systems reach a WER of at least 0.80, and a text classifier on their output predicts the label with an AUROC of at most 0.60. Otherwise the whole-turn backup (each whole turn played backwards) is used, checked the same way |
+| F5 Cost | A three-view run takes at most 4 GPU-hours. If not, every arm uses 8 instead of 16 segments per participant per epoch, and B1's round 2 is cut first. |
 
 ## Decision rule
 
@@ -40,10 +59,12 @@ The decision uses the point estimates of Δ on `x0` and on `rev`. The 80% interv
 
 ## Allowed setting changes
 
-Two changes are allowed. Each comes from training logs only and is made once, before the remaining runs start. It applies to all arms, is dated in the settings change log below and is sent to the supervisor in one line.
+Besides the pre-set fallbacks in the feasibility checks, two changes are allowed. Each comes from training logs only and is made once, before the remaining runs start. It applies to all arms, is dated in the settings change log below and is sent to the supervisor in one line.
 
-- **Gain-alive rule.** One CPG run (round 1, fold 1) runs first. If the hinge is active on fewer than 20% of bags in epochs 2 and 3, m becomes 0.5. If it is active on more than 80%, m becomes 0.1.
-- **Four-epoch rule.** If the training loss is still clearly falling in epoch 3, every arm trains 4 epochs, and B0's round 1 is rerun with 4 epochs.
+- **Gain-alive rule.** One CPG run (round 1, fold 1) runs before any other CPG run. If the hinge is active on fewer than 20% of bags in epochs 2 and 3, m becomes 0.5. If it is active on more than 80%, m becomes 0.1.
+- **4-epoch rule.** If the training loss of that same CPG run is still clearly falling in epoch 3, every arm trains 4 epochs, and B0's round 1 is rerun with 4 epochs.
+
+If m or the number of epochs changes, that first CPG run is redone with the new setting.
 
 ## If time runs short
 

@@ -46,10 +46,12 @@ evaluation/   person scores, AUROC, bootstrap, report tables
 pipeline/     one module per pipeline step
 ```
 
+So far the package holds only `settings.py`. The other modules, the configs and the pipeline job files described on this page are the planned layout; each arrives with its code.
+
 - Library modules hold pure functions and classes. They take arrays, tensors and dataclasses, not file paths, so tests can call them with synthetic data.
 - `pipeline/` modules do the reading and writing. Each step reads one config, calls the library, writes into its own workspace folder and leaves a `run.json` there.
 - The pipeline steps are `inventory`, `labels`, `partitions`, `align`, `segments`, `views`, `wordcheck`, `cache`, `zeroshot`, `train`, `score`, `evaluate`, `probe` and `report`. Each step has one name, used everywhere: the subcommand (`lbw segments`), the module (`pipeline/segments.py`), the job file (`scripts/slurm/segments.sbatch`), the job name (`lbw-segments`) and the output folder.
-- Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh` and `scripts/unpack_edaic_pilot.sh`.
+- Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`. They predate the step and job-file rules below.
 - `cli.py` and the `lbw` entry in `[project.scripts]` land in the same commit.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
@@ -62,7 +64,7 @@ pipeline/     one module per pipeline step
   - `cpu` on the Mac and in CI;
   - `cu126` on OMNI. It is the last CUDA build of PyTorch with V100 (sm_70) kernels. The PyPI build of the same version has none.
 - The `pipeline` extra adds the tools for clip building, the word check and the probe (Kokoro, faster-whisper, jiwer, Parselmouth). Only OMNI needs it.
-- `pyproject.toml` pins exact versions of the packages that can change the numbers: torch, torchaudio, transformers, peft and mistral-common. The rest have lower bounds, and `uv.lock` pins them.
+- `pyproject.toml` pins exact versions of the packages that can change the numbers: torch, torchaudio, transformers, peft and mistral-common, and the pipeline tools kokoro, misaki, faster-whisper and en-core-web-sm. Ruff is pinned to match its git hook. The rest have lower bounds, and `uv.lock` pins them.
 - Add a dependency with `uv add --no-sync <package>`, then run `make env`. Upgrade a package on purpose with `uv lock --upgrade-package <package>`, in its own `build(deps)` commit. No upgrades between the settings freeze and the pilot report.
 - In VS Code, use the Ruff, Python and EditorConfig extensions, and select `.venv` as the interpreter.
 
@@ -71,7 +73,7 @@ pipeline/     one module per pipeline step
 ```bash
 make env     # .venv with the CPU build of PyTorch
 make hooks   # git hooks, once per clone
-make check   # everything CI runs
+make check   # lint, type check and tests (CI also runs make hooks-run)
 ```
 
 ### On OMNI
@@ -105,7 +107,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 | `make test` | Run the fast tests (synthetic data, CPU) |
 | `make test-all` | Run every CPU test, including slow ones |
 | `make test-gpu` | Run the GPU tests (on OMNI, inside a GPU job) |
-| `make check` | Run everything CI runs |
+| `make check` | Run lint, type check and tests (CI also runs `make hooks-run`) |
 | `make hooks` | Install the git hooks |
 | `make hooks-run` | Run every git hook on every file |
 | `make clean` | Delete tool caches and build output, never data |
@@ -117,7 +119,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 - Every function in `src/` has type hints. mypy checks the package in CI. Tests are not type-checked.
 - Docstrings follow the Google style: a one-line summary, then `Args:`, `Returns:` and `Raises:`. Every public module, class and function has one.
 - Docstrings give tensor shapes, for example `z0: Scores of shape (B,).`
-- Code that implements a formula names its source, for example "methodology rev 26, Appendix A.1".
+- Code that implements a formula names its source, for example "pilot protocol, fixed settings".
 - Comments explain why, not what.
 - Raise specific exceptions with a clear message. Never write a bare `except:`. Use `assert` only in tests.
 
@@ -153,7 +155,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 - `config.py` turns the YAML into frozen dataclasses. The loader rejects unknown keys and wrong types, so a typo stops the run before it starts.
 - Keys are snake_case and carry their unit: `gap_ms: 300`, `cutoff_hz: 400`, `segment_words: 40`.
 - Write floats with a dot and a signed exponent: `1.0e-4`, not `1e-4`. PyYAML reads `1e-4` as a string.
-- A value taken from the method cites its source in a comment, for example `# rev 26, A.1`.
+- A value taken from the method cites its source in a comment, for example `# pilot protocol, fixed settings`.
 - Model revisions are commit hashes, never `main`.
 - Paths in configs are relative to the workspace root.
 - The run record stores the resolved config and its SHA-256 (canonical JSON, sorted keys). Folder names use the first 12 characters of the hash.
@@ -202,7 +204,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - Never commit audio, transcripts, clip versions, features, caches, checkpoints, labels, partitions, segment manifests, per-person or per-segment scores, the USC download link, approval e-mails or secrets.
 - `.gitignore` and two hooks guard this. `forbid-data-files` blocks audio, tensor, checkpoint, archive and notebook files. `forbid-tables-outside-reports` blocks CSV, TSV and JSONL files outside `reports/`.
 - `reports/` holds aggregate numbers only: per-fold AUROC, means, intervals and figures. Report writers refuse columns that identify a person or a segment (`pid`, `segment_id`).
-- Sessions 600-718 are never listed, globbed or opened. All code that touches E-DAIC files goes through one module, `data/edaic.py`. It accepts only the 189 pilot IDs (300-492 without 342, 394, 398 and 460) and raises an error for any other ID.
+- Sessions 600–718 are never opened or used before the external test. The download script fetches them and records their sizes and checksums; on OMNI they stay packed and locked (no read permission). Apart from the download and unpack scripts, all code that touches E-DAIC files goes through one module, `data/edaic.py`. It accepts only the 189 pilot IDs (300–492 without 342, 394, 398 and 460) and raises an error for any other ID.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
 - Data never leaves OMNI: no copies to the Mac, no external services, no hosted notebooks, no online trackers.
 - Files are private: scripts and jobs set `umask 077`.
@@ -231,7 +233,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 
 - `train`, `score` and `evaluate` refuse to start when the checkout has uncommitted changes. Their `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
 - Partitions are saved with their SHA-256 before any training. `configs/pilot/data.yaml` records the hashes, and training stops when a partition file does not match.
-- Settings freeze (week 3): the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then tag the commit `v0.1.0`; every later pilot run uses it. No setting changes after test scores are seen.
+- Settings freeze (week 3): the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then release 0.1.0 as described in section 13: a `chore(release): 0.1.0` commit tagged `v0.1.0`. Every later pilot run uses this tag or a later `0.1.x`. No setting changes after test scores are seen.
 
 ## 9. Slurm jobs
 
@@ -286,7 +288,7 @@ lbw train --config "$config" --round $((task / 5 + 1)) --fold $((task % 5 + 1))
   4. With z0 = k · z1 + c and exact statistics, G is zero on bags where the words are right.
   5. The clamp example (y = 1, words −1.0, real audio −0.7): G = −0.70 with the clamp and +0.30 without it; push strength 1.000 and 0.500.
   6. The soft hinge is never more than s · ln 2 above the hard hinge, with the largest gap at G = m.
-  7. The gain push and the cross-entropy push as a bag grows confident.
+  7. As a bag grows confident (y = 1, words-only reference 0), the cross-entropy push |dCE/dz| = 1 − sigmoid(z̄0) fades gradually, while the gain push sigmoid((m − G)/s) stays close to 1 until G reaches the margin m and then falls off quickly.
 - The pilot also needs these tests: the gain is computed in fp32 from fp16 inputs; λG ramps up over the first 20% of steps; the running statistics use momentum 0.9 from first and second moments; σ never falls below a quarter of its zero-shot value or 0.1; "Yes" and "No" are single tokens; and a score from the cache equals the score from the audio (GPU).
 
 ## 11. Commits

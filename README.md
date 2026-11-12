@@ -3,6 +3,7 @@
 **Counterfactual training for depression detection with audio LLMs**
 
 Master's thesis project, M.Sc. Computer Science, University of Siegen.
+
 Author: Umair Talib · Supervisor: Ugonna Oleh
 
 > **Status (November 2026):** method designed, pilot study in preparation. No results yet.
@@ -44,7 +45,7 @@ where $\hat z$ are standardised per-bag scores (running statistics with stop-gra
 ## Roadmap
 
 - [ ] Pilot study: can CPG beat standard fine-tuning? (B0 vs B1 vs CPG, 2 × 5-fold CV)
-- [ ] Full study: unseen word masks, conflict set, controlled shortcut test
+- [ ] Main study: unseen word masks, conflict set, controlled shortcut test
 - [ ] External test on held-out E-DAIC sessions
 - [ ] Thesis and paper
 
@@ -54,7 +55,7 @@ No results yet. The pilot starts on 2026-11-16. Its aggregate results and the go
 
 ## Repository layout
 
-```
+```text
 src/listening_beyond_words/   library code (data pipeline, views, CPG loss, training, evaluation)
 tests/                        unit tests on synthetic data (loss values, gradients, data splits)
 configs/                      experiment configurations, one YAML file per experiment
@@ -69,7 +70,7 @@ The environment is locked with [uv](https://docs.astral.sh/uv/) and uses Python 
 ```bash
 make env      # create .venv with the CPU build of PyTorch
 make hooks    # install the git hooks
-make check    # format check, lint, type check and tests, as in CI
+make check    # format check, lint, type check and tests (CI also runs the git hooks)
 ```
 
 On the OMNI cluster, `scripts/setup_omni_env.sh` builds the GPU environment in the workspace. The rules for code, configs, data, Slurm jobs, commits and releases are in [`docs/engineering_conventions.md`](docs/engineering_conventions.md).
@@ -84,4 +85,4 @@ See [`docs/README.md`](docs/README.md) for the pilot protocol, the engineering c
 
 ## Licence
 
-© 2026 Umair Talib. All rights reserved until this repository is made public. Nothing here licenses the DAIC-WOZ or E-DAIC data: USC ICT grants access to them under its own agreement.
+© 2026 Umair Talib. All rights reserved for now; an open-source licence will follow after the thesis is graded. Nothing here licenses the DAIC-WOZ or E-DAIC data: USC ICT grants access to them under its own agreement.
