@@ -40,7 +40,9 @@ CHUNK_VAD = {
     "min_silence_duration_ms": 100,
     "speech_pad_ms": 30,
 }
-MIN_CHUNK_SECONDS = 0.25  # shorter chunks give unreliable voice embeddings and are only counted
+# The x-vector head needs at least 15 frames (about 0.31 s) of audio; shorter chunks
+# are only counted, not scored.
+MIN_CHUNK_SECONDS = 0.4
 
 
 def clip_of(audio: np.ndarray, rate: int, span: iv.Span) -> np.ndarray:
