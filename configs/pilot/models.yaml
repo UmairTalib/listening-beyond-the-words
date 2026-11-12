@@ -11,3 +11,8 @@ voxtral:
   ignore:
     - consolidated.safetensors
     - params.json
+
+# Speaker verification: tells the interviewer's voice from the participant's.
+wavlm_sv:
+  repo_id: microsoft/wavlm-base-plus-sv
+  revision: "feb593a6c23c1cc3d9510425c29b0a14d2b07b1e"
