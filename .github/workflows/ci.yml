@@ -1,0 +1,40 @@
+# Lint, type check and test every push to main and every pull request.
+# CI uses the CPU build of PyTorch and synthetic data only; it has no secrets.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, types and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      HF_HUB_OFFLINE: "1"
+      LBW_TORCH: cpu
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - name: Install the locked environment
+        run: make env
+      - name: Run the git hooks on every file
+        run: make hooks-run
+      - name: Check format and lint rules
+        run: make lint
+      - name: Type-check
+        run: make typecheck
+      - name: Run the tests
+        run: make test
