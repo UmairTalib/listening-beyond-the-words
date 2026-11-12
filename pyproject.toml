@@ -1,0 +1,184 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "listening-beyond-words"
+version = "0.1.0.dev0"
+description = "Counterfactual paralinguistic gain (CPG) for LoRA fine-tuning of an audio LLM for depression detection"
+readme = "README.md"
+requires-python = "==3.12.*"
+authors = [{ name = "Umair Talib" }]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    # Model stack: exact pins, because a new version can change the numbers.
+    "mistral-common[audio]==1.13.1",
+    "peft==0.21.2",
+    "transformers==5.22.2",
+    # Data, audio and statistics: lower bounds here, exact versions in uv.lock.
+    "huggingface-hub>=1.31",
+    "numpy>=2.3",
+    "pandas>=3.0",
+    "pyarrow>=25.0",
+    "pyyaml>=6.0.2",
+    "scikit-learn>=1.9",
+    "scipy>=1.18",
+    "soundfile>=0.13",
+    "soxr>=1.0",
+]
+
+[project.optional-dependencies]
+# PyTorch build. Choose exactly one: cpu on the Mac and in CI, cu126 on OMNI.
+# cu126 is the last CUDA build of PyTorch with V100 (sm_70) kernels.
+cpu = ["torch==2.14.1", "torchaudio==2.11.0"]
+cu126 = ["torch==2.14.1", "torchaudio==2.11.0"]
+# Tools for clip building, the word check and the encoder probe (OMNI only).
+# en-core-web-sm is the spaCy model of the Kokoro text front end; installing it
+# from its release wheel means jobs never download it.
+pipeline = [
+    "en-core-web-sm==3.8.0",
+    "faster-whisper==1.2.1",
+    "jiwer>=4.0",
+    "kokoro==0.9.4",
+    "misaki[en]==0.9.4",
+    "praat-parselmouth>=0.4.7",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4",
+    "pandas-stubs>=3.0",
+    "pre-commit>=4.6",
+    "pytest>=9.1",
+    "ruff==0.17.4",  # keep equal to the ruff-pre-commit rev in .pre-commit-config.yaml
+    "types-pyyaml>=6.0.12",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/listening_beyond_words"]
+
+# ---------------------------------------------------------------------------
+# uv: one lock file for the Mac (arm64) and Linux x86_64 (OMNI and CI)
+# ---------------------------------------------------------------------------
+[tool.uv]
+required-version = ">=0.11"
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+conflicts = [[{ extra = "cpu" }, { extra = "cu126" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "cu126", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "cu126", marker = "sys_platform == 'linux'" },
+]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+# ---------------------------------------------------------------------------
+# Ruff: formatter and linter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+    "B",    # likely bugs (flake8-bugbear)
+    "C4",   # comprehensions
+    "D",    # docstrings (Google convention, below)
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import order
+    "LOG",  # logging misuse
+    "N",    # naming
+    "NPY",  # NumPy: seeded Generator instead of the legacy global RNG
+    "PT",   # pytest style
+    "PTH",  # pathlib instead of os.path
+    "RUF",  # ruff-specific checks
+    "SIM",  # simplifications
+    "T20",  # no print() in library code: use logging
+    "TID",  # absolute imports only
+    "UP",   # modern syntax for Python 3.12
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    "D105",  # magic methods need no docstring
+    "D107",  # __init__ arguments are documented in the class docstring
+    "E501",  # line length is the formatter's job
+    "N806",  # maths and tensor-shape names inside functions (G_b, B, T)
+    "N812",  # import torch.nn.functional as F
+]
+allowed-confusables = ["α", "ρ", "σ", "−", "×"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"scripts/**" = ["D", "T20"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+known-first-party = ["listening_beyond_words"]
+
+# ---------------------------------------------------------------------------
+# mypy: type checks for the package (not the tests)
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_equality = true
+extra_checks = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+ignore_missing_imports = true
+pretty = true
+
+# ---------------------------------------------------------------------------
+# pytest: fast, synthetic tests by default
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--import-mode=importlib",
+    "-m",
+    "not slow and not gpu",
+]
+markers = [
+    "slow: takes more than about ten seconds; run with: make test-all",
+    "gpu: needs a CUDA GPU; run on OMNI with: make test-gpu",
+]
+xfail_strict = true
