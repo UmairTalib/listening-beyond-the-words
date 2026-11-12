@@ -12,6 +12,22 @@ interviewer_filter:
   drop_interviewer_phrases: true # drop a line that contains a known interviewer phrase
   drop_unclear_min_seconds: 1.5 # drop a line this long that has no 0.75 s of detected speech
 
+broken_timestamps:
+  min_seconds: 30 # a line at least this long ...
+  max_words_per_second: 1.0 # ... with fewer words per second has broken timestamps: dropped
+
 participant_lines:
   run: derived/participant_lines/run-20261112T110028Z # written by scripts/select_lines.py
   sha256: 35022a5717336c56239b6e47c5009f5547c032319ecb3548958e5f476f2f3223
+
+word_times:
+  run: null # derived/word_times/run-<job id>, written by scripts/align_words.py
+  sha256: null
+
+segments:
+  run: null # derived/segments/run-<UTC time>, written by scripts/build_segments.py
+  sha256: null
+
+partitions:
+  run: null # derived/partitions/run-<UTC time>, written by scripts/build_partitions.py
+  sha256: null

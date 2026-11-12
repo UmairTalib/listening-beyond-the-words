@@ -85,6 +85,7 @@ def test_line_decisions_drop_interviewer_lines_and_phrase_lines() -> None:
             "line": [0, 1, 2, 3],
             "start": [0.0, 3.5, 6.0, 7.0],
             "end": [3.0, 5.0, 6.5, 7.6],
+            "words": [8, 4, 3, 1],
             "phrase": [False, False, True, False],
         }
     )
@@ -104,7 +105,14 @@ def test_line_decisions_drop_interviewer_lines_and_phrase_lines() -> None:
 
 def test_line_decisions_keep_a_line_below_the_drop_share() -> None:
     lines = pd.DataFrame(
-        {"session": [9001], "line": [0], "start": [0.0], "end": [3.0], "phrase": [False]}
+        {
+            "session": [9001],
+            "line": [0],
+            "start": [0.0],
+            "end": [3.0],
+            "words": [6],
+            "phrase": [False],
+        }
     )
     windows = pd.DataFrame(
         {"session": [9001] * 3, "kind": ["line"] * 3, "line": [0] * 3, "score": [0.2, -0.1, -0.3]}
@@ -119,6 +127,7 @@ def test_line_decisions_drop_a_long_line_without_detected_speech() -> None:
             "line": [0, 1],
             "start": [0.0, 5.0],
             "end": [2.0, 5.6],
+            "words": [5, 1],
             "phrase": [False, False],
         }
     )
@@ -134,6 +143,25 @@ def test_line_decisions_drop_a_long_line_without_detected_speech() -> None:
     assert decided["unclear"].tolist() == [True, False]
     assert decided["drop"].tolist() == [True, False]
     assert not iv.line_decisions(lines, windows, unclear_min_seconds=None)["drop"].any()
+
+
+def test_line_decisions_drop_lines_with_broken_timestamps() -> None:
+    lines = pd.DataFrame(
+        {
+            "session": [9001] * 2,
+            "line": [0, 1],
+            "start": [0.0, 10.0],
+            "end": [400.0, 50.0],
+            "words": [5, 110],
+            "phrase": [False, False],
+        }
+    )
+    windows = pd.DataFrame(
+        {"session": [9001] * 2, "kind": ["line"] * 2, "line": [0, 1], "score": [-0.3, -0.2]}
+    )
+    decided = iv.line_decisions(lines, windows)
+    assert decided["broken"].tolist() == [True, False]
+    assert decided["drop"].tolist() == [True, False]
 
 
 @pytest.fixture(scope="module")

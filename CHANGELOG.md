@@ -23,3 +23,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Labels of the pilot: PHQ-8 total of 10 or more from the official split files, checked against the item scores, keeping only the 189 pilot sessions; pinned with its SHA-256 in `configs/pilot/data.yaml`.
 - Line selection of the pilot: the interviewer filter applied to every transcript line, with a check that the dropped share does not differ between PHQ-8 classes or genders.
 - Pilot protocol section "Speech used": the transcripts, the labels and the interviewer filter, fixed before any training.
+- Word times: lines with broken timestamps are dropped, and the words of every kept line are placed on the audio by forced alignment with a pinned wav2vec2 model (GPU job).
+- Segments of exactly 40 consecutive participant words, with lines joined by 300 ms gaps.
+- Partitions: 2 rounds of 5 folds (seeds 101 and 102), split by participant and stratified by label and gender.

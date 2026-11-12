@@ -12,6 +12,15 @@ voxtral:
     - consolidated.safetensors
     - params.json
 
+# English CTC speech model: places the transcript words on the audio (forced
+# alignment); also one of the two recognisers of the word check (F4).
+wav2vec2_960h:
+  repo_id: facebook/wav2vec2-large-960h-lv60-self
+  revision: "54074b1c16f4de6a5ad59affb4caa8f2ea03a119"
+  ignore:
+    - flax_model.msgpack
+    - tf_model.h5
+
 # Speaker verification: tells the interviewer's voice from the participant's.
 wavlm_sv:
   repo_id: microsoft/wavlm-base-plus-sv

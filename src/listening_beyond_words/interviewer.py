@@ -28,6 +28,8 @@ MIN_GAP_SECONDS: Final = 0.5
 MIN_PROFILE_WINDOWS: Final = 10
 DROP_SHARE: Final = 0.5
 UNCLEAR_MIN_SECONDS: Final = 1.5
+BROKEN_MIN_SECONDS: Final = 30.0
+BROKEN_MAX_WORDS_PER_SECOND: Final = 1.0
 VAD_OPTIONS: Final = {
     "threshold": 0.5,
     "min_speech_duration_ms": 250,
@@ -233,29 +235,37 @@ def line_decisions(
     windows: pd.DataFrame,
     drop_share: float = DROP_SHARE,
     unclear_min_seconds: float | None = UNCLEAR_MIN_SECONDS,
+    broken_min_seconds: float | None = BROKEN_MIN_SECONDS,
+    broken_max_words_per_second: float = BROKEN_MAX_WORDS_PER_SECOND,
 ) -> pd.DataFrame:
     """Decide which participant lines the pilot keeps.
 
     A line is dropped if at least ``drop_share`` of its speech windows score above 0
     (closer to the interviewer than to the participant), if it contains a known
-    interviewer phrase, or if it lasts at least ``unclear_min_seconds`` but has no
-    speech window at all: no stretch of clearly detected speech, so neither the
-    model nor a listener has judged it. Shorter lines without a window, such as a
-    quick "yeah", are kept.
+    interviewer phrase, if it lasts at least ``unclear_min_seconds`` but has no
+    speech window at all (no stretch of clearly detected speech, so neither the
+    model nor a listener has judged it), or if its timestamps are broken: it lasts
+    at least ``broken_min_seconds`` with fewer than ``broken_max_words_per_second``
+    words per second, a few words spread over minutes. Shorter lines without a
+    window, such as a quick "yeah", are kept.
 
     Args:
         lines: One row per transcript line, with the columns ``session``, ``line``,
-            ``start``, ``end`` and ``phrase`` (True if the line contains an
-            interviewer phrase).
+            ``start``, ``end``, ``words`` and ``phrase`` (True if the line contains
+            an interviewer phrase).
         windows: Scored windows as written by ``scripts/flag_interviewer.py``, with
             the columns ``session``, ``kind``, ``line`` and ``score``.
         drop_share: Share of a line's windows above 0 from which it is dropped.
         unclear_min_seconds: Length from which a line without a speech window is
             dropped; None keeps all such lines.
+        broken_min_seconds: Length from which a slow line counts as broken; None
+            turns this rule off.
+        broken_max_words_per_second: Speaking rate below which a long line counts
+            as broken.
 
     Returns:
-        ``lines`` with three more columns: ``share_above_0`` (NaN for a line without
-        a speech window), ``unclear`` and ``drop``.
+        ``lines`` with four more columns: ``share_above_0`` (NaN for a line without
+        a speech window), ``unclear``, ``broken`` and ``drop``.
     """
     scored = windows[(windows["kind"] == "line") & windows["score"].notna()]
     share = (
@@ -270,10 +280,17 @@ def line_decisions(
         unclear_min_seconds if unclear_min_seconds is not None else float("inf")
     )
     decided["unclear"] = decided["share_above_0"].isna() & long_enough
+    seconds = decided["end"] - decided["start"]
+    decided["broken"] = (
+        (seconds >= broken_min_seconds) & (decided["words"] < broken_max_words_per_second * seconds)
+        if broken_min_seconds is not None
+        else False
+    )
     decided["drop"] = (
         (decided["share_above_0"] >= drop_share)
         | decided["phrase"].astype(bool)
         | decided["unclear"]
+        | decided["broken"]
     )
     return decided
 

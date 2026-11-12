@@ -85,11 +85,14 @@ def main() -> None:
     lines = transcript_lines(workspace.edaic / "sessions")
     if not filter_cfg["drop_interviewer_phrases"]:
         lines["phrase"] = False
+    broken_cfg = config["broken_timestamps"]
     decided = line_decisions(
         lines,
         pd.read_parquet(windows_path),
         drop_share=drop_share,
         unclear_min_seconds=filter_cfg["drop_unclear_min_seconds"],
+        broken_min_seconds=float(broken_cfg["min_seconds"]),
+        broken_max_words_per_second=float(broken_cfg["max_words_per_second"]),
     )
     output = run_dir / "lines.parquet"
     decided.to_parquet(output, index=False)
@@ -107,6 +110,7 @@ def main() -> None:
         "lines_dropped_by_voice": by_voice,
         "lines_with_phrase": int(decided["phrase"].sum()),
         "lines_unclear": int(decided["unclear"].sum()),
+        "lines_broken": int(decided["broken"].sum()),
         "words": int(words.sum()),
         "words_dropped": int(dropped.sum()),
         "segments_possible": int((kept // SEGMENT_WORDS).sum()),
@@ -115,7 +119,8 @@ def main() -> None:
     print(
         f"lines {counts['lines']}: dropped {counts['lines_dropped']}"
         f" ({counts['lines_dropped'] / counts['lines']:.3f}); by voice {by_voice},"
-        f" with a phrase {counts['lines_with_phrase']}, unclear {counts['lines_unclear']}"
+        f" with a phrase {counts['lines_with_phrase']}, unclear {counts['lines_unclear']},"
+        f" broken timestamps {counts['lines_broken']}"
     )
     print(
         f"words {counts['words']}: dropped {counts['words_dropped']}"
