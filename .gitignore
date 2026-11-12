@@ -1,23 +1,57 @@
-notes
+# Local folders and secrets
+/notes
 .env
+.env.*
 .DS_Store
 ._*
+.idea/
+.vscode/
 
-# Data and anything derived from it must never reach GitHub (USC licence, health data)
+# Python, tools and build output
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Data and anything derived from it never reach GitHub (USC licence, health data).
+# The pre-commit hooks forbid-data-files and forbid-tables-outside-reports are the
+# second line of defence. Data, caches, runs and logs live in the OMNI workspace.
 /data/
+/cache/
+/caches/
+/checkpoints/
+/clips/
+/logs/
+/outputs/
+/results/
+/runs/
+/scores/
+/wandb/
+[3-7][0-9][0-9]_P/
 *.wav
 *.flac
+*.mp3
+*.m4a
+*.ogg
+*.tar
 *.tar.gz
-cache/
-caches/
-clips/
-checkpoints/
-outputs/
-runs/
-scores/
-wandb/
+*.zip
+*.parquet
+*.npy
+*.npz
 *.pt
+*.pth
+*.ckpt
+*.bin
 *.safetensors
-__pycache__/
+*.pkl
+*.pickle
+*.ipynb
 .ipynb_checkpoints/
-slurm-*.out
+*.log
+*.out

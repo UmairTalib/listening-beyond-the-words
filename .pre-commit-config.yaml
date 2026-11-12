@@ -1,0 +1,65 @@
+# Git hooks. Install once per clone with: make hooks
+# Run on every file with: make hooks-run
+# Update the pinned versions with: uv run pre-commit autoupdate
+# (keep the ruff rev equal to the ruff version in uv.lock)
+minimum_pre_commit_version: "4.0.0"
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+        types: [file]
+        files: \.(sh|sbatch)$
+
+  - repo: local
+    hooks:
+      - id: forbid-data-files
+        name: no data, models or notebooks in git
+        language: fail
+        entry: >-
+          Data, caches, checkpoints and notebooks stay in the OMNI workspace.
+          See docs/engineering_conventions.md, section "Data protection".
+        files: \.(wav|flac|mp3|m4a|ogg|pt|pth|ckpt|safetensors|bin|npy|npz|h5|hdf5|parquet|arrow|feather|pkl|pickle|joblib|ipynb|tar|gz|tgz|zip|7z)$
+      - id: forbid-tables-outside-reports
+        name: tables only in reports/
+        language: fail
+        entry: >-
+          CSV, TSV and JSONL files belong in reports/ and hold aggregate numbers only.
+          See docs/engineering_conventions.md, section "Data protection".
+        files: \.(csv|tsv|jsonl)$
+        exclude: ^reports/
+      - id: commit-message
+        name: commit message format
+        language: python
+        entry: python scripts/check_commit_msg.py
+        stages: [commit-msg]
