@@ -3,8 +3,8 @@
 # and steps stop when a file no longer matches.
 
 labels:
-  run: null # derived/labels/run-<UTC time>, written by scripts/build_labels.py
-  sha256: null
+  run: derived/labels/run-20261112T103229Z # written by scripts/build_labels.py
+  sha256: 37f264807ada4e9b71268a4895f31fae6e439d2a90454480d31a5dc4245c2e08
 
 interviewer_filter:
   run: derived/interviewer/run-12429618 # written by scripts/flag_interviewer.py
