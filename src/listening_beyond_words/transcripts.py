@@ -22,18 +22,85 @@ COLUMNS: Final = {
 }
 
 # Lines of the virtual interviewer (Ellie) from the published DAIC-WOZ interview
-# protocol, in a wording that participants rarely use themselves.
+# protocol: her questions, follow-ups and comments, in her own wording, which a
+# participant does not use when answering (a participant says "my life", Ellie says
+# "your life"; a participant may say "diagnosed with PTSD", so only Ellie's whole
+# question is listed). Normalised as by ``normalise``.
 INTERVIEWER_PHRASES: Final = (
+    # Opening
     "thanks for coming in today",
     "safe and secure environment",
     "your answers are totally confidential",
+    "created to talk to people",
+    "think of me as a friend",
+    "here to learn about people",
+    "ask a few questions to get us started",
+    "are you okay with this",
+    "are you ok with this",
+    "how are you doing today",
+    # Questions
     "where are you from originally",
+    "why did you move to la",
+    "why did you move to l a",
+    "whyd you move to la",
+    "how do you like la",
+    "how do you like l a",
+    "things you really like about la",
+    "things you really like about l a",
+    "things you dont really like about la",
+    "things you dont really like about l a",
+    "how often do you go back to your hometown",
+    "what did you study at school",
+    "whats your dream job",
+    "what is your dream job",
+    "do you travel a lot",
+    "what do you enjoy about traveling",
+    "one of your trips",
+    "do you consider yourself an introvert",
+    "consider yourself more shy or outgoing",
     "what do you do to relax",
+    "how are you at controlling your temper",
+    "the last time you argued with someone",
+    "how did you feel in that moment",
+    "how close are you to them",
+    "one of your most memorable experiences",
     "how easy is it for you to get a good nights sleep",
+    "what are you like when you dont sleep well",
+    "how have you been feeling lately",
+    "changes in your behavior or thoughts",
     "have you been diagnosed with depression",
-    "what are you most proud of in your life",
-    "what advice would you give yourself",
+    "have you ever been diagnosed with p t s d",
+    "have you ever been diagnosed with ptsd",
+    "have you ever served in the military",
+    "how long ago were you diagnosed",
+    "what got you to seek help",
+    "do you still go to therapy",
+    "do you feel like therapy is useful",
     "the last time you felt really happy",
+    "what advice would you give yourself",
+    "what are you most proud of in your life",
+    "how would your best friend describe you",
+    "how would your best friends describe you",
+    "is there anything you regret",
+    "whats something you feel guilty about",
+    "what is something you feel guilty about",
+    "some of your best qualities",
+    "usually put you in a good mood",
+    "positive influence in your life",
+    "things that make you really mad",
+    # Follow-ups and comments
+    "tell me more about that",
+    "can you tell me about that",
+    "give me an example of that",
+    "that sounds really hard",
+    "im sorry to hear that",
+    "i see what you mean",
+    "thats so good to hear",
+    "that sounds like a great situation",
+    # Closing
+    "thanks for sharing your thoughts",
+    "asked everything i need",
+    "it was great chatting with you",
 )
 FILLERS: Final = frozenset({"um", "uh", "umm", "uhm", "mm", "hmm", "mhm", "erm"})
 TYPOGRAPHIC_APOSTROPHE: Final = chr(0x2019)

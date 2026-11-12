@@ -66,3 +66,16 @@ def test_summarise_counts_lines_words_timing_confidence_fillers_tags_and_phrases
 def test_summarise_finds_no_interviewer_phrase_in_a_participant_answer(tmp_path: Path) -> None:
     body = "1.0,3.0,I'm from Ohio originally and I came here for work,0.95\n"
     assert summarise(read_transcript(write_transcript(tmp_path, body))).interviewer_phrases == set()
+
+
+def test_summarise_finds_ellies_follow_ups_and_comments(tmp_path: Path) -> None:
+    body = '1.0,3.0,"That sounds really hard. Can you give me an example of that?",0.9\n'
+    phrases = summarise(read_transcript(write_transcript(tmp_path, body))).interviewer_phrases
+    assert phrases == {"that sounds really hard", "give me an example of that"}
+
+
+def test_a_participant_talking_about_a_diagnosis_is_not_an_interviewer_phrase(
+    tmp_path: Path,
+) -> None:
+    body = "1.0,3.0,yes I was diagnosed with PTSD after I served in the military,0.9\n"
+    assert summarise(read_transcript(write_transcript(tmp_path, body))).interviewer_phrases == set()
