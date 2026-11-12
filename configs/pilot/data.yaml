@@ -28,6 +28,10 @@ segments:
   run: derived/segments/run-20261112T113215Z # written by scripts/build_segments.py
   sha256: 937da5c540c4d6df4c8ad4b26e339bb5532b5a0dbc7ba7a933f546102ac389de
 
+x0_cut: # how a segment's original clip is cut from the recording (src/listening_beyond_words/views.py)
+  margin_ms: 100 # most audio kept before a part's first word and after its last word
+  fade_ms: 10 # fade in and out at both ends of a part, so that the joins do not click
+
 partitions:
   run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py
   sha256: ec44630d9e1f95aa7ba05db7005c960f42fbd5b456921cd8a314e34cf1fb4ca2
