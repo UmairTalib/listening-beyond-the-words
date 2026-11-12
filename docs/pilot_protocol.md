@@ -1,6 +1,6 @@
 # Pilot protocol
 
-This page fixes how the pilot runs and how its result is read. It is agreed with the supervisor by e-mail and committed here before the first training run. Nothing on this page changes after test scores are seen. The only allowed changes are listed below and recorded in the settings change log.
+This page fixes how the pilot runs and how its result is read. It is committed here before the first training run; the commit date shows it was fixed in advance. Nothing on this page changes after test scores are seen. The only allowed changes are listed below and recorded in the settings change log.
 
 ## Design
 
