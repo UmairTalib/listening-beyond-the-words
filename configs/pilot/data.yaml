@@ -11,3 +11,7 @@ interviewer_filter:
   drop_share: 0.5 # drop a line when this share of its speech windows sounds like the interviewer
   drop_interviewer_phrases: true # drop a line that contains a known interviewer phrase
   drop_unclear_min_seconds: 1.5 # drop a line this long that has no 0.75 s of detected speech
+
+participant_lines:
+  run: derived/participant_lines/run-20261112T110028Z # written by scripts/select_lines.py
+  sha256: 35022a5717336c56239b6e47c5009f5547c032319ecb3548958e5f476f2f3223
