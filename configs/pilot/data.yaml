@@ -25,8 +25,8 @@ word_times:
   sha256: c62ddab7a5c7f97a20969b662b10203a0045da0e900c31beddf7b4bca7707ff9
 
 segments:
-  run: null # derived/segments/run-<UTC time>, written by scripts/build_segments.py
-  sha256: null
+  run: derived/segments/run-20261112T113215Z # written by scripts/build_segments.py
+  sha256: 937da5c540c4d6df4c8ad4b26e339bb5532b5a0dbc7ba7a933f546102ac389de
 
 partitions:
   run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py
