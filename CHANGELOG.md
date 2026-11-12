@@ -18,3 +18,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Download script that fetches E-DAIC straight into the OMNI workspace, checks file sizes and records SHA-256 checksums.
 - Unpack job for the audio and transcripts of the 189 pilot sessions (300–492).
 - Voxtral Mini 3B pinned to a Hugging Face commit in `configs/pilot/models.yaml`, a script that fetches pinned models on an OMNI login node, and a GPU smoke test job: the model loads in fp16, "Yes" and "No" are single tokens, and synthetic clips get finite scores.
+- The 189 pilot session IDs with a guard that refuses every other session, an E-DAIC transcript reader, and a transcript check that prints aggregate numbers only: lines, words, coverage, timing, confidence, fillers, tags and known interviewer phrases.
