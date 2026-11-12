@@ -5,7 +5,10 @@
 # Example: bash unpack_edaic_pilot.sh "$(ws_find cpg-thesis)/edaic" 8
 #
 # Reads   <edaic_dir>/raw/data/NNN_P.tar.gz             packed originals (read-only)
-#         <edaic_dir>/manifest/sha256sums.pinned.txt    checksums recorded at download
+#         <edaic_dir>/manifest/sha256sums.pinned.txt    checksums recorded at download: a
+#                                                       read-only copy of sha256sums.txt, made
+#                                                       once after the download reports DONE
+#                                                       (cp -p sha256sums.txt sha256sums.pinned.txt)
 # Writes  <edaic_dir>/sessions/NNN_P/NNN_AUDIO.wav      read-only
 #         <edaic_dir>/sessions/NNN_P/NNN_Transcript.csv read-only
 #         <edaic_dir>/manifest/sessions_sha256.txt      checksums of the unpacked files
