@@ -28,3 +28,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Partitions: 2 rounds of 5 folds (seeds 101 and 102), split by participant and stratified by label and gender.
 - Cut of the original clip (`x0`): each part of a segment keeps up to 0.1 s of audio around its words, never more than halfway to the nearest other kept word or past the recording, fades in and out over 10 ms and is joined to the next part by 300 ms of silence. The margin and the fade are set in `configs/pilot/data.yaml`.
 - Listening check: a script on OMNI cuts 20 random segments as original clips at a common loudness, numbered in random order, with a key to open only after listening.
+- Chunk check of the interviewer filter: a GPU job scores every short stretch of speech inside the listened clips on its own, with a control on known interviewer lines.

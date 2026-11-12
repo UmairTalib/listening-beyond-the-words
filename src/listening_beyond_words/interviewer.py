@@ -11,7 +11,7 @@ into the pilot's rule for which participant lines are kept.
 Spans are ``(start, end)`` pairs in seconds.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -295,12 +295,17 @@ def line_decisions(
     return decided
 
 
-def speech_regions(audio: np.ndarray, sampling_rate: int = SAMPLING_RATE) -> list[Span]:
+def speech_regions(
+    audio: np.ndarray,
+    sampling_rate: int = SAMPLING_RATE,
+    options: Mapping[str, float] = VAD_OPTIONS,
+) -> list[Span]:
     """Find the speech in a recording with the Silero detector bundled with faster-whisper.
 
     Args:
         audio: Mono audio samples in [-1, 1].
         sampling_rate: Sampling rate of ``audio``; the detector expects 16 kHz.
+        options: Detector settings; the line filter uses ``VAD_OPTIONS``.
 
     Returns:
         The speech regions.
@@ -308,7 +313,7 @@ def speech_regions(audio: np.ndarray, sampling_rate: int = SAMPLING_RATE) -> lis
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
     chunks = get_speech_timestamps(
-        audio, vad_options=VadOptions(**VAD_OPTIONS), sampling_rate=sampling_rate
+        audio, vad_options=VadOptions(**options), sampling_rate=sampling_rate
     )
     return [(c["start"] / sampling_rate, c["end"] / sampling_rate) for c in chunks]
 
