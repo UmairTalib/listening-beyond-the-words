@@ -50,7 +50,10 @@ ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-re
   decoy_semitones: 3
   theta_grid: [4.0, 4.5, 5.0, 5.5, 6.0, 7.0, 8.0, 10.0]
   threshold_cost: {mean: 0.005, family: 0.0075}
-  tau_rep: null # set by scripts/ellie_facts.py
+  facts: # written by scripts/ellie_facts.py, job 12441756, 2026-11-13; gate P1 failed
+    run: derived/ellie_detector/facts-12441756
+    sha256: ad771de51747dbbf20b29052e2e283f3fc2d8b02269a4c2354f1bf022bf9a620 # of library_all.npz
+  tau_rep: 0.3082 # fine-structure variant, from the facts run
   theta_z: null # set from the decoys by scripts/detect_ellie.py, before any listening gate
   lines: {zone_share: 0.5}
   words: {guard_ms: 50}

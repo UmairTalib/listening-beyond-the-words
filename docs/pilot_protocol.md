@@ -51,6 +51,8 @@ The gates run in this order, and a failed gate stops the chain.
 
 Exactly one fallback follows a failure. If P1 or P2 fails, templates are built within each session instead of across sessions. If a later gate fails with the misses mostly over words or quiet, a small learned frame detector on frozen WavLM states is added on top of the zones, trained on the zones and on her clips planted over words; its threshold is the largest score that finds at least 70% of planted copies over words while dropping at most 1% more of the kept words. The fallback repeats the gates once, and V7 then uses seed 104. If V6 fails while the decoys' cost is balanced between the classes, the difference is real interviewer speech, and the case goes to the supervisor before training. If the fallback fails too, the pilot waits for the DAIC-WOZ transcripts with the interviewer's own times, and the next step is decided with the supervisor. No setting is ever tuned on a listened clip, and no rule is loosened.
 
+Result on 2026-11-13, gate P: P1 failed. The same interviewer phrase in two sessions scored far above unrelated pairs (median 0.22 against 0.03 for different phrases), but not reliably above the same word said by two participants: AUROC 0.929 for the fine-structure variant (0.857 for the whitened spectrum), and only 23% of same-phrase pairs above the null's 99.9th percentile (40%). P2 passed with 587 templates, but the chain stops at P1.
+
 ## Fixed settings
 
 These values are fixed before the first training run. Only the two allowed changes below may alter m or the number of epochs.
