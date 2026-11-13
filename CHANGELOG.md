@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Listening check: a script on OMNI cuts 20 random segments as original clips at a common loudness, numbered in random order, with a key to open only after listening.
 - Chunk check of the interviewer filter: a GPU job scores every short stretch of speech inside the listened clips on its own, with a control on known interviewer lines.
 - Interviewer detector, first part: spectral fingerprints of short sound events, the search for each event's best match in every other session, and a GPU job that checks the premise (gate P1) and builds the template libraries of the interviewer's recurring clips (gate P2).
+- Interviewer detector, second part: a GPU scan of every session with every template (normalised cross-correlation, on all cells and on the quiet frames), pitch decoys that set the threshold, zones, and a job that checks gates D1-D4 with planted copies and reports what the zones would cost by class and gender.
 
 ### Changed
 

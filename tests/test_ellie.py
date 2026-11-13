@@ -189,3 +189,73 @@ def test_clusters_take_each_sessions_best_match_once() -> None:
         el.leader_clusters(best, which, lag, first_event, session_of, groups, 0.5, 3, 8, only_two)
         == []
     )
+
+
+def direct_ncc(x: np.ndarray, valid: np.ndarray, t: el.Template, start: int) -> float:
+    cells = t.active & (valid[start : start + t.frames] > 0)[:, None]
+    a, b = t.values[cells].astype(np.float64), x[start : start + t.frames][cells].astype(np.float64)
+    a, b = a - a.mean(), b - b.mean()
+    return float(a @ b / np.sqrt((a @ a) * (b @ b)))
+
+
+def test_the_scan_equals_a_direct_correlation_over_the_valid_active_cells() -> None:
+    rng = np.random.default_rng(9001)
+    x = rng.normal(0.0, 1.0, (120, 16)).astype(np.float32)
+    valid = (rng.random(120) > 0.2).astype(np.float32)
+    templates = [
+        el.Template(
+            rng.normal(0, 1, (length, 16)).astype(np.float32), rng.random((length, 16)) > 0.5, 3, 3
+        )
+        for length in (7, 12)
+    ]
+    ncc, count = el.ncc_scan(x, valid, templates)
+    for i, t in enumerate(templates):
+        for start in (0, 17, 120 - t.frames):
+            assert ncc[i, start] == pytest.approx(direct_ncc(x, valid, t, start), abs=1e-4)
+            cells = t.active & (valid[start : start + t.frames] > 0)[:, None]
+            assert count[i, start] == cells.sum()
+        assert np.isnan(ncc[i, 120 - t.frames + 1 :]).all()
+
+
+def reverb(audio: np.ndarray, seconds: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    n = int(seconds * RATE)
+    tail = rng.normal(0.0, 1.0, n) * np.exp(-np.arange(n) / (0.05 * RATE))
+    response = np.concatenate([[1.0], 0.3 * tail / np.abs(tail).sum()])
+    return np.convolve(audio, response)[: len(audio)].astype(np.float32)
+
+
+def test_a_planted_clip_is_found_where_it_is_and_its_decoys_and_noise_are_not() -> None:
+    a = clip(150.0, 230.0, seconds=0.8)
+    copies = []
+    for k, (gain, tilt) in enumerate([(0.0, 0.0), (-6.0, 0.5), (-10.0, 0.8)]):
+        audio = session([(1.0, a, gain)], tilt=tilt, seed=9100 + k)
+        _, white, _ = features(audio)
+        onset = first_event(audio)
+        copies.append(white[onset - 5 : onset + 85])
+    template = el.build_template(copies, sessions=3, active_db=8.0, min_active=20)
+    assert template is not None
+    target = reverb(session([(2.37, a, -12.0)], tilt=0.3, seed=9200), 0.3, seed=9201)
+    _, white, shape = features(target)
+    valid = np.ones(len(shape), dtype=np.float32)
+    real = [template, el.decoy(template, 3.0, SPEC), el.decoy(template, -3.0, SPEC)]
+    ncc, _ = el.ncc_scan(shape, valid, real)
+    true_start = round(2.37 * 100) - 5
+    assert abs(int(np.nanargmax(ncc[0])) - true_start) <= 2
+    assert np.nanmax(ncc[0]) > 0.6
+    assert np.nanmax(ncc[1:, true_start - 3 : true_start + 4]) < 0.5 * np.nanmax(ncc[0])
+    t = np.arange(6 * RATE) / RATE
+    tone = (0.2 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    noise = np.random.default_rng(9300).normal(0.0, 0.05, 6 * RATE).astype(np.float32)
+    for other in (tone, noise):
+        _, _, other_shape = features(other)
+        other_ncc, _ = el.ncc_scan(other_shape, np.ones(len(other_shape), np.float32), [template])
+        assert np.nanmax(other_ncc) < 0.3
+
+
+def test_peaks_are_local_maxima_and_zones_merge_when_close() -> None:
+    scores = np.array([0, 5, 9, 5, 0, 0, 7, 7, 0, 0, 0, 0, 12, 0], dtype=float)
+    assert el.local_peaks(scores, 2, 6.0).tolist() == [2, 6, 12]
+    assert el.local_peaks(scores, 5, 6.0).tolist() == [2, 12]
+    assert el.merge_zones([(50, 60), (10, 20), (22, 30)], 5) == [(10, 30), (50, 60)]
+    assert el.merge_zones([(10, 20), (26, 30)], 5) == [(10, 20), (26, 30)]

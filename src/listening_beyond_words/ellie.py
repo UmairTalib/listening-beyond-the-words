@@ -581,3 +581,157 @@ def leader_clusters(
             taken[members] = True
             clusters.append(Cluster(int(leader), tuple(members), tuple(shifts)))
     return clusters
+
+
+def decoy(template: Template, semitones: float, spectrum: Spectrum) -> Template:
+    """Return a pitch decoy: the template and its mask rescaled in frequency.
+
+    The decoy keeps the time course but no longer fits the real clip, so its scores
+    show how often a template matches by chance (pilot protocol, threshold rule).
+
+    Args:
+        template: The real template.
+        semitones: Frequency shift.
+        spectrum: The spectrum settings.
+
+    Returns:
+        The decoy; bins pushed out of the band are inactive.
+    """
+    floor = float(template.values.min())
+    values = pitch_shift(template.values, semitones, spectrum, fill=floor)
+    moved = pitch_shift(template.active.astype(np.float32), semitones, spectrum, fill=0.0)
+    return Template(
+        values=values, active=moved >= 0.5, sessions=template.sessions, members=template.members
+    )
+
+
+def ncc_scan(
+    x: np.ndarray,
+    valid: np.ndarray,
+    templates: Sequence[Template],
+    device: str = "cpu",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Slide templates over a session: normalised cross-correlation over active cells.
+
+    For a template with values ``w`` and active mask ``M``, at every start frame
+    ``t`` the correlation between ``w`` and ``x[t : t + T]`` is taken over the active
+    cells of the frames where ``valid`` is true (pilot protocol, detection rule).
+    All sums run in float32 on ``device``.
+
+    Args:
+        x: Session features, shape (frames, bins), for example the spectral shape S.
+        valid: Frame weights, shape (frames,): 1 to use a frame, 0 to ignore it.
+        templates: Templates to scan, any lengths.
+        device: Where the convolutions run ("cuda" on OMNI).
+
+    Returns:
+        ``ncc`` of shape (templates, frames), NaN where a template does not fit or
+        no active cell is valid, and ``n``, the number of valid active cells, same shape.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    k, frames = len(templates), x.shape[0]
+    ncc = np.full((k, frames), np.nan, dtype=np.float32)
+    count = np.zeros((k, frames), dtype=np.float32)
+    if k == 0 or frames == 0:
+        return ncc, count
+    length = max(t.frames for t in templates)
+    bins = x.shape[1]
+    mask = np.zeros((k, bins, length), dtype=np.float32)
+    weight = np.zeros((k, bins, length), dtype=np.float32)
+    for i, t in enumerate(templates):
+        m = t.active.T.astype(np.float32)
+        mask[i, :, : t.frames] = m
+        weight[i, :, : t.frames] = m * t.values.T
+    with torch.inference_mode():
+        dev = torch.device(device)
+        # Pad the end with invalid frames, so that every template gets every start frame.
+        v = torch.from_numpy(np.ascontiguousarray(valid, dtype=np.float32)).to(dev)
+        v = F.pad(v, (0, length - 1))
+        xt = torch.from_numpy(np.ascontiguousarray(x.T, dtype=np.float32)).to(dev)
+        xt = F.pad(xt, (0, length - 1))
+        vx = (xt * v)[None]
+        vxx = (xt * xt * v)[None]
+        m_t = torch.from_numpy(mask).to(dev)
+        w_t = torch.from_numpy(weight).to(dev)
+        col_m = m_t.sum(dim=1, keepdim=True)  # (k, 1, length): active cells per template frame
+        col_w = w_t.sum(dim=1, keepdim=True)
+        col_ww = (w_t * w_t).sum(dim=1, keepdim=True)  # w is 0 outside the mask
+        v1 = v[None, None]
+        n = F.conv1d(v1, col_m)[0]
+        sw = F.conv1d(v1, col_w)[0]
+        sww = F.conv1d(v1, col_ww)[0]
+        sx = F.conv1d(vx, m_t)[0]
+        sxx = F.conv1d(vxx, m_t)[0]
+        swx = F.conv1d(vx, w_t)[0]
+        safe = torch.clamp(n, min=1.0)
+        cov = swx - sw * sx / safe
+        var = (sww - sw * sw / safe) * (sxx - sx * sx / safe)
+        out = cov / torch.sqrt(torch.clamp(var, min=1e-12))
+        out = torch.where(n >= 2, out, torch.full_like(out, float("nan")))
+        ncc[:] = out[:, :frames].cpu().numpy()
+        count[:] = n[:, :frames].cpu().numpy()
+    for i, t in enumerate(templates):
+        ncc[i, frames - t.frames + 1 :] = np.nan  # the template would run past the session
+        count[i, frames - t.frames + 1 :] = 0.0
+    return ncc, count
+
+
+def fitted_gain(white: np.ndarray, template: Template, start: int) -> float:
+    """How loud a match is relative to the template: a low percentile of W minus w.
+
+    Args:
+        white: Whitened spectrum W of the session, shape (frames, bins).
+        template: The template.
+        start: The match's first frame.
+
+    Returns:
+        The 25th percentile of ``W - w`` over the template's active cells, in dB.
+    """
+    window = white[start : start + template.frames]
+    return float(np.percentile((window - template.values)[template.active], 25))
+
+
+def local_peaks(scores: np.ndarray, half_width: int, threshold: float) -> np.ndarray:
+    """Frames where a score reaches ``threshold`` and is the largest within ``+-half_width``.
+
+    Args:
+        scores: One score per frame; NaN is never a peak.
+        half_width: Half the neighbourhood in frames.
+        threshold: Lowest peak score.
+
+    Returns:
+        The peak frames, in time order; of equal neighbours the first one.
+    """
+    from scipy.ndimage import maximum_filter1d
+
+    filled = np.where(np.isfinite(scores), scores, -np.inf)
+    biggest = maximum_filter1d(filled, size=2 * half_width + 1, mode="constant", cval=-np.inf)
+    peaks = np.flatnonzero((filled >= threshold) & (filled == biggest))
+    if len(peaks) < 2:
+        return peaks
+    keep = [int(peaks[0])]
+    for p in peaks[1:]:
+        if p - keep[-1] > half_width or filled[p] > filled[keep[-1]]:
+            keep.append(int(p))
+    return np.array(keep, dtype=np.int64)
+
+
+def merge_zones(zones: Sequence[tuple[int, int]], gap_frames: int) -> list[tuple[int, int]]:
+    """Join zones that overlap or lie less than ``gap_frames`` apart.
+
+    Args:
+        zones: (first frame, end frame) pairs in any order.
+        gap_frames: Zones closer than this are joined.
+
+    Returns:
+        Sorted, joined zones.
+    """
+    merged: list[list[int]] = []
+    for start, end in sorted(zones):
+        if merged and start - merged[-1][1] < gap_frames:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(a, b) for a, b in merged]
