@@ -31,6 +31,54 @@ segments:
 x0_cut: # how a segment's original clip is cut from the recording (src/listening_beyond_words/views.py)
   margin_ms: 100 # most audio kept before a part's first word and after its last word
   fade_ms: 10 # fade in and out at both ends of a part, so that the joins do not click
+  wall_guard_ms: 20 # margins stop this far before an interviewer zone
+
+ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
+  run: null # written by scripts/detect_ellie.py
+  sha256: null # of its zones.parquet
+  seed: 103
+  spectrum: {n_fft: 512, hop: 160, low_bin: 3, high_bin: 128} # 32 ms Hann, 10 ms hop, 94-4000 Hz
+  events: {rise_db: 6, rerun_rise_db: 4, merge_ms: 150, min_ms: 250, max_ms: 4000}
+  discovery: {line_guard_ms: 300, phrase_guard_ms: 1000, word_guard_ms: 50, min_pause_ms: 250}
+  descriptor: {frames: 40, onset_lead_frames: 5, mask_db: 4, max_lag_frames: 8}
+  null_words: [okay, yeah, yes, right, really, good, well, so, know, like]
+  null_pairs: 20000
+  null_word: {min_line_words: 8, min_score: 0.5, level_below_db: 6, window_ms: 400}
+  recurrence: {quantile: 0.999, min_other_sessions: 2, duplicate_share: 0.2, cluster_min_sessions: 3}
+  template: {pad_ms: 150, active_db: 8, min_active_cells: 20, min_templates: 80, noise_share: 0.02}
+  scan: {confident_z: 8, min_confident_hits: 5, delta_db_min: 2, delta_db_max: 10, valid_share: 0.4, zone_merge_ms: 300, candidate_z: 3}
+  decoy_semitones: 3
+  theta_grid: [4.0, 4.5, 5.0, 5.5, 6.0, 7.0, 8.0, 10.0]
+  threshold_cost: {mean: 0.005, family: 0.0075}
+  tau_rep: null # set by scripts/ellie_facts.py
+  theta_z: null # set from the decoys by scripts/detect_ellie.py, before any listening gate
+  lines: {zone_share: 0.5}
+  words: {guard_ms: 50}
+  pre_interview: {min_zone_ms: 1500, within_ms: 120000, max_word_share: 0.005}
+  gates:
+    p1: {min_auroc: 0.95, min_share_above: 0.5}
+    d1: {min_line_share: 0.8, min_covered: 0.5}
+    d3: {pause: 0.9, edge: 0.9, partial: 0.5, copies: 500, found_share: 0.8}
+    d4: {max_word_windows: 0.01, max_kept_words: 0.03}
+    v4: {min_detections: 12, max_controls: 2, clips_each: 20, clip_ms: 2000}
+    v5: {min_yes: 3, max_no: 3, note_ms: 500}
+    v6: {min_p: 0.05}
+    v7: {max_heard: 2, seed: 102, fallback_seed: 104}
+  fallback_a: {min_copies_in_session: 3, min_apart_ms: 1000} # templates within each session; if P1 or P2 fails
+  fallback_b: # frame detector on frozen WavLM states on top of the zones; if a later gate fails, misses mostly over words or quiet
+    pool_ms: 50
+    conv_kernel: 9
+    hidden: 256
+    folds: 2
+    learning_rate: 1.0e-3
+    steps: 3000
+    positive_min_z: 8
+    planted_sir_db: [0, -15]
+    negative_min_distance_ms: 1000
+    own_speech_sir_db: [-20, -35]
+    min_event_ms: 200
+    min_recall_over_words: 0.7
+    max_extra_word_share: 0.01
 
 partitions:
   run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py

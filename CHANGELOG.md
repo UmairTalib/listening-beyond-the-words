@@ -33,3 +33,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - 2026-11-12: the interviewer filter knows 70 of Ellie's scripted lines instead of 10, in her own wording only, because 1.6% of the segments still held her questions in their words.
+- 2026-11-13: an interviewer detector is pre-registered in the pilot protocol, with its settings, gates and one fallback in `configs/pilot/data.yaml`, because the listening check heard the interviewer in 4 of 20 clips that the speaker-verification filter had kept.

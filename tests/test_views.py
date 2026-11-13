@@ -175,5 +175,6 @@ def test_data_config_sets_a_fade_that_fits_inside_the_margin() -> None:
         (Path(__file__).parents[1] / "configs" / "pilot" / "data.yaml").read_text(encoding="utf-8")
     )
     cut = config["x0_cut"]
-    assert set(cut) == {"margin_ms", "fade_ms"}
+    assert set(cut) == {"margin_ms", "fade_ms", "wall_guard_ms"}
     assert 0 < cut["fade_ms"] < cut["margin_ms"]
+    assert 0 < cut["wall_guard_ms"] < cut["margin_ms"]
