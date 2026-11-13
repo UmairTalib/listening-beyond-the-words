@@ -13,7 +13,7 @@ This page fixes how the pilot runs and how its result is read. It is committed h
 | Test views | `x0` (original audio) and `rev` (each 250 ms window played backwards, so the words are removed) |
 | Main numbers | Δ = CPG − B0 in mean per-fold AUROC on each test view, over 10 fold-runs, with 80% and 95% intervals |
 | Also reported | B1 − B0 and CPG − B1, values per round, zero-shot AUROC, Spearman correlation with the PHQ-8 totals |
-| Compute | About 100 V100 GPU-hours |
+| Compute | About 100 V100 GPU-hours per run; the pilot runs twice (section "Interviewer detector") |
 
 ## Speech used
 
@@ -53,6 +53,13 @@ Exactly one fallback follows a failure. If P1 or P2 fails, templates are built w
 
 Result on 2026-11-13, gate P: P1 failed. The same interviewer phrase in two sessions scored far above unrelated pairs (median 0.22 against 0.03 for different phrases), but not reliably above the same word said by two participants: AUROC 0.929 for the fine-structure variant (0.857 for the whitened spectrum), and only 23% of same-phrase pairs above the null's 99.9th percentile (40%). P2 passed with 587 templates, but the chain stops at P1.
 
+Decision on 2026-11-13, before any training. The fallback is not run: none of the 266 known interviewer lines has its phrase transcribed three or more times in its own session, so a library built within sessions could not meet D1. The pilot therefore runs twice, with the same settings.
+
+- **First run, preliminary.** It uses the speech rebuilt with the 70 scripted lines dropped. The interviewer can still be heard in some segments (in 4 of the 20 listened clips); this is reported as a limitation.
+- **Second run, the main result.** When the DAIC-WOZ transcripts with the interviewer's own times arrive, every stretch where she speaks is cut out and the speech is rebuilt. A new blind listening check of 20 segments (seed 102, none overlapping the first 20 clips) must find another voice in at most 2. Then all runs are repeated.
+- **Fixed now.** The decision rule is read on the second run; the first run only measures how much the leak changed the result. Settings fixed during the first run (the margin m and the number of epochs) carry over unchanged, with no new tuning.
+- **Deadline.** If the transcripts have not arrived by 2026-11-27, an interviewer finder that re-transcribes the audio with the pinned Whisper model is tried first, with its own rules fixed before it runs.
+
 ## Fixed settings
 
 These values are fixed before the first training run. Only the two allowed changes below may alter m or the number of epochs.
@@ -86,7 +93,7 @@ All five checks must pass before the main numbers are read. A failed check is fi
 
 ## Decision rule
 
-The decision uses the point estimates of Δ on `x0` and on `rev`. The 80% intervals and the values per round are reported next to them as a check, not as a test.
+The decision uses the point estimates of Δ on `x0` and on `rev`. The 80% intervals and the values per round are reported next to them as a check, not as a test. The rule is read on the second, clean run (section "Interviewer detector"); the first run is reported as preliminary.
 
 | Outcome | Rule | Decision |
 | --- | --- | --- |

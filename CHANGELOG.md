@@ -36,3 +36,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - 2026-11-12: the interviewer filter knows 70 of Ellie's scripted lines instead of 10, in her own wording only, because 1.6% of the segments still held her questions in their words.
 - 2026-11-13: an interviewer detector is pre-registered in the pilot protocol, with its settings, gates and one fallback in `configs/pilot/data.yaml`, because the listening check heard the interviewer in 4 of 20 clips that the speaker-verification filter had kept.
+- 2026-11-13: the pilot runs twice, because the interviewer detector failed its premise gate: a preliminary run on the current speech, then the main run once the interviewer's times from the DAIC-WOZ transcripts allow her to be cut out. Settings fixed in the first run carry over.
