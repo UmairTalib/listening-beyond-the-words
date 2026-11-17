@@ -185,6 +185,7 @@ $LBW_WORKSPACE/
   edaic/raw/              packed originals and labels, read-only
   edaic/manifest/         checksums, inventories and status files
   edaic/sessions/         the 189 unpacked pilot sessions, read-only
+  daicwoz/run-<time>/     DAIC-WOZ transcripts from the official archives (read-only), their index
   derived/                labels, partitions, word times, segment manifests
   views/<view>/           clip versions (FLAC): x0, x1, x2, rev
   cache/<view>/           frozen-encoder outputs
@@ -208,7 +209,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
 - Data never leaves OMNI: no copies to the Mac, no external services, no hosted notebooks, no online trackers.
 - Files are private: scripts and jobs set `umask 077`.
-- The download link is passed to `scripts/download_edaic.sh` as an argument when it runs. It never appears in a file in git.
+- The download links are passed to `scripts/download_edaic.sh` and `scripts/fetch_daicwoz_transcripts.py` as arguments when they run. They never appear in a file in git.
 - Code never deletes anything on OMNI. Each run writes a new folder. Clean-ups are manual: list what would go first, then delete.
 - Tests and CI use synthetic data only.
 

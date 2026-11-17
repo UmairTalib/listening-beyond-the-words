@@ -34,6 +34,11 @@ class Workspace:
         return self.root / "edaic"
 
     @property
+    def daicwoz(self) -> Path:
+        """DAIC-WOZ transcripts taken from the official session archives, one folder per run."""
+        return self.root / "daicwoz"
+
+    @property
     def derived(self) -> Path:
         """Labels, partitions, word times and segment manifests."""
         return self.root / "derived"
