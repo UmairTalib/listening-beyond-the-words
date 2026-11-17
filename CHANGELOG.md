@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Interviewer detector, first part: spectral fingerprints of short sound events, the search for each event's best match in every other session, and a GPU job that checks the premise (gate P1) and builds the template libraries of the interviewer's recurring clips (gate P2).
 - Interviewer detector, second part: a GPU scan of every session with every template (normalised cross-correlation, on all cells and on the quiet frames), pitch decoys that set the threshold, zones, and a job that checks gates D1-D4 with planted copies and reports what the zones would cost by class and gender.
 - DAIC-WOZ transcripts: a script on OMNI takes each session's human transcript, with the interviewer's lines and their times, out of the official DAIC-WOZ archive through HTTP range requests, without downloading the archive. It checks each transcript against the archive's CRC-32, compares the archive's recording with the E-DAIC one, and prints aggregate numbers only.
+- DAIC-WOZ download script: fetches the official DAIC-WOZ files straight into the OMNI workspace, apart from E-DAIC, with resumable parallel downloads, size checks against the server, SHA-256 checksums and read-only files. It refuses any session outside the 189 pilot sessions.
 
 ### Changed
 
