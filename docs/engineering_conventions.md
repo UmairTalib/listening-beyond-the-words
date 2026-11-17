@@ -197,8 +197,8 @@ $LBW_WORKSPACE/
   env/                    environment and uv cache, rebuilt by scripts/setup_omni_env.sh
 ```
 
-- A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` can be rebuilt from git and the raw data.
-- Before the last extension runs out, allocate a new workspace, copy `edaic/` and `derived/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again.
+- A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` and `daicwoz/raw/` can be rebuilt from git and the raw data.
+- Before the last extension runs out, allocate a new workspace, copy `edaic/`, `daicwoz/` and `derived/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again.
 
 ## 7. Data protection
 
@@ -211,7 +211,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
 - Data never leaves OMNI: no copies to the Mac, no external services, no hosted notebooks, no online trackers.
 - Files are private: scripts and jobs set `umask 077`.
-- The download links are passed to `scripts/download_edaic.sh`, `scripts/download_daicwoz.sh` and `scripts/fetch_daicwoz_transcripts.py` as arguments when they run. They never appear in a file in git.
+- The download links are passed to `scripts/download_edaic.sh` and `scripts/download_daicwoz.sh` as arguments when they run. They never appear in a file in git.
 - Code never deletes anything on OMNI. Each run writes a new folder. Clean-ups are manual: list what would go first, then delete.
 - Tests and CI use synthetic data only.
 
