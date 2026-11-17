@@ -13,13 +13,13 @@ This page fixes how the pilot runs and how its result is read. It is committed h
 | Test views | `x0` (original audio) and `rev` (each 250 ms window played backwards, so the words are removed) |
 | Main numbers | Δ = CPG − B0 in mean per-fold AUROC on each test view, over 10 fold-runs, with 80% and 95% intervals |
 | Also reported | B1 − B0 and CPG − B1, values per round, zero-shot AUROC, Spearman correlation with the PHQ-8 totals |
-| Compute | About 100 V100 GPU-hours per run; the pilot runs twice (section "Interviewer detector") |
+| Compute | About 100 V100 GPU-hours; the pilot runs once, on speech with the interviewer cut out (section "Interviewer detector") |
 
 ## Speech used
 
 Fixed on 12 November 2026, before any training. The settings are in `configs/pilot/data.yaml`.
 
-- **Transcripts.** The pilot uses the E-DAIC transcripts, because the DAIC-WOZ human transcripts had not arrived when the segments were built. They come from automatic speech recognition, hold the participant's lines and contain almost no fillers such as "um" and "uh". The words-only view `x1` therefore has no fillers, while `x0` keeps them. This is reported as a limitation.
+- **Transcripts.** The pilot takes its words from the E-DAIC transcripts, because the DAIC-WOZ human transcripts had not arrived when the segments were built. They come from automatic speech recognition, hold the participant's lines and contain almost no fillers such as "um" and "uh". The words-only view `x1` therefore has no fillers, while `x0` keeps them. This is reported as a limitation. The DAIC-WOZ transcripts, which arrived on 2026-11-18, are used only for the interviewer's times (section "Interviewer detector").
 - **Labels.** A participant is positive if the PHQ-8 total in the official split files is 10 or more. For every pilot participant this total equals the sum of the eight item scores. 57 of the 189 participants are positive. The binary column disagrees for 15 participants and is not used. A third label file gives a different total for 2 participants, which changes no label. Gender comes from the split files (87 female, 102 male); `detailed_lables.csv` codes it differently for 3 participants.
 - **Interviewer filter.** The interviewer is mostly inaudible in these recordings, but leaks into some participant lines, and an assistant can be heard at the start of a few sessions. A transcript line is dropped if at least half of its speech, cut into 1.5 s windows, sounds more like the interviewer than like the participant to a speaker-verification model (WavLM x-vectors, pinned in `configs/pilot/models.yaml`), or if it contains one of 70 lines of her script in her own wording (10 until 2026-11-12, when 1.6% of the segments were found to still hold her questions). A line that lasts at least 1.5 s but holds no 0.75 s of continuously detected speech is dropped as well, because neither the model nor a listener has judged it; such lines hold 1.9% of the words and are balanced between the PHQ-8 classes. In a blind listening check of 35 lines, another voice was heard in an estimated 3.6% of all lines before the filter and in about 1.3% after it. The rest is reported as a limitation.
 - **Word times.** A line of 30 s or more with fewer than one word per second has broken timestamps (a few words spread over minutes) and is dropped. The words of every kept line are then placed on the audio by forced alignment with wav2vec2-large-960h-lv60-self (pinned in `configs/pilot/models.yaml`); digits are spelled out for the aligner only. A line that cannot be aligned is dropped and counted.
@@ -60,6 +60,12 @@ Decision on 2026-11-13, before any training. The fallback is not run: none of th
 - **Fixed now.** The decision rule is read on the second run; the first run only measures how much the leak changed the result. Settings fixed during the first run (the margin m and the number of epochs) carry over unchanged, with no new tuning.
 - **Deadline.** If the transcripts have not arrived by 2026-11-27, an interviewer finder that re-transcribes the audio with the pinned Whisper model is tried first, with its own rules fixed before it runs.
 
+Decision on 2026-11-18, before any training. The DAIC-WOZ human transcripts arrived, so the pilot runs once, on the speech with the interviewer cut out; this replaces the two runs above. The preliminary run on the current speech and the Whisper finder are dropped.
+
+- **Source.** The transcripts come from the official DAIC-WOZ release of USC ICT. Each is checked against the CRC-32 in its archive, and every recording in the release is byte-identical to the E-DAIC recording of the same session, so the transcript times apply to the E-DAIC audio as they are. The official archive of session 440 is cut off on the USC server, so its transcript comes from a public copy whose other 188 transcripts are byte-identical to the official files; seven further copies agree with it.
+- **Cut.** Every stretch where the interviewer speaks is cut out by her times in these transcripts. Sessions 451, 458 and 480 have no interviewer lines in the release; for them only the participant's own turns are kept. The exact rule, including how known timing offsets and interruptions are handled, is fixed on this page before the speech is rebuilt.
+- **Check.** A new blind listening check of 20 segments (seed 102, none overlapping the first 20 clips) must find another voice in at most 2 before any training.
+
 ## Fixed settings
 
 These values are fixed before the first training run. Only the two allowed changes below may alter m or the number of epochs.
@@ -93,7 +99,7 @@ All five checks must pass before the main numbers are read. A failed check is fi
 
 ## Decision rule
 
-The decision uses the point estimates of Δ on `x0` and on `rev`. The 80% intervals and the values per round are reported next to them as a check, not as a test. The rule is read on the second, clean run (section "Interviewer detector"); the first run is reported as preliminary.
+The decision uses the point estimates of Δ on `x0` and on `rev`. The 80% intervals and the values per round are reported next to them as a check, not as a test. The rule is read on the single run on the speech with the interviewer cut out (section "Interviewer detector").
 
 | Outcome | Rule | Decision |
 | --- | --- | --- |
