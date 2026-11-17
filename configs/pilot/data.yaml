@@ -86,3 +86,11 @@ ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-re
 partitions:
   run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py
   sha256: ec44630d9e1f95aa7ba05db7005c960f42fbd5b456921cd8a314e34cf1fb4ca2
+
+daicwoz_transcripts: # official DAIC-WOZ human transcripts; used only for the interviewer's times (decision of 2026-11-18)
+  run: daicwoz/run-20261117T232504Z # written by scripts/extract_daicwoz_transcripts.py
+  sha256: f07a7d99080c02e2036df49f52112b2573c8925bac5b7952971a6b0fac97d256 # of its sessions.tsv, which lists every transcript's SHA-256
+  extra: # sessions whose official archive is broken on the USC server
+    - session: 440
+      file: daicwoz/extra-440-20261117T233842Z/440_TRANSCRIPT.csv # verified public copy; see source.json there
+      sha256: 194b5ce8af2f8b519cd4e160c0289b08cdfad825194cffd75b9cebe9a41c9f8b
