@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -7,7 +8,12 @@ import pytest
 import yaml
 
 from listening_beyond_words.segments import build_segments, segment_neighbours
-from listening_beyond_words.views import cut_original, part_windows
+from listening_beyond_words.views import (
+    cut_original,
+    part_windows,
+    segment_windows,
+    windows_overlap,
+)
 
 RATE = 16_000
 MARGIN = 0.1  # the pilot's settings, configs/pilot/data.yaml
@@ -178,3 +184,81 @@ def test_data_config_sets_a_fade_that_fits_inside_the_margin() -> None:
     assert set(cut) == {"margin_ms", "fade_ms", "wall_guard_ms"}
     assert 0 < cut["fade_ms"] < cut["margin_ms"]
     assert 0 < cut["wall_guard_ms"] < cut["margin_ms"]
+
+
+def test_margin_stops_halfway_to_a_dropped_word() -> None:
+    between = part_windows([1.0, 3.0], [2.0, 4.0], 10.0, margin=MARGIN, others=[(2.06, 2.5)])
+    np.testing.assert_allclose(between, [(0.9, 2.03), (2.9, 4.1)])
+    outside = part_windows([1.0], [2.0], 10.0, margin=MARGIN, before=0.5, others=[(0.9, 0.96)])
+    np.testing.assert_allclose(outside, [(0.98, 2.1)])
+
+
+def test_margin_stops_short_of_a_wall() -> None:
+    windows = part_windows(
+        [1.0, 3.0],
+        [2.0, 4.0],
+        10.0,
+        margin=MARGIN,
+        walls=[(2.05, 2.9), (4.1, 5.0)],
+        wall_guard=0.02,
+    )
+    np.testing.assert_allclose(windows, [(0.9, 2.03), (2.92, 4.08)])
+
+
+@pytest.mark.parametrize(
+    ("others", "walls", "message"),
+    [
+        ([(1.5, 1.6)], [], "overlaps part"),  # another word inside a part
+        ([], [(1.5, 1.6)], "comes within"),  # a wall inside a part
+        ([], [(2.01, 2.5)], "comes within"),  # a wall closer than the guard
+        ([], [(0.5, 0.99)], "comes within"),
+    ],
+)
+def test_parts_that_touch_other_words_or_walls_are_refused(
+    others: list[tuple[float, float]], walls: list[tuple[float, float]], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        part_windows([1.0], [2.0], 10.0, margin=MARGIN, others=others, walls=walls, wall_guard=0.02)
+
+
+def test_a_dropped_word_that_touches_a_part_leaves_no_margin() -> None:
+    windows = part_windows([1.0], [2.0], 10.0, margin=MARGIN, others=[(0.8, 1.0), (2.0, 2.3)])
+    assert windows == [(1.0, 2.0)]
+
+
+def test_segment_windows_read_every_limit_from_the_segment_row() -> None:
+    row = SimpleNamespace(
+        starts=[1.0, 3.0],
+        ends=[2.0, 4.0],
+        before=0.5,
+        after=4.5,
+        other_starts=[2.06],
+        other_ends=[2.5],
+        wall_starts=[4.3],
+        wall_ends=[5.0],
+    )
+    windows = segment_windows(row, 10.0, margin=MARGIN, wall_guard=0.02)
+    np.testing.assert_allclose(windows, [(0.9, 2.03), (2.9, 4.1)])
+    tight = segment_windows(
+        SimpleNamespace(**{**vars(row), "wall_starts": [4.05]}),
+        10.0,
+        margin=MARGIN,
+        wall_guard=0.02,
+    )
+    assert tight[-1][1] == pytest.approx(4.03)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "shared"),
+    [
+        ([(0.0, 1.0)], [(1.0, 2.0)], False),  # touching windows share no audio
+        ([(0.0, 1.5)], [(1.0, 2.0)], True),
+        ([], [(0.0, 1.0)], False),
+        ([(3.0, 4.0), (0.0, 1.0)], [(0.5, 0.6)], True),
+    ],
+)
+def test_windows_overlap(
+    first: list[tuple[float, float]], second: list[tuple[float, float]], shared: bool
+) -> None:
+    assert windows_overlap(first, second) is shared
+    assert windows_overlap(second, first) is shared

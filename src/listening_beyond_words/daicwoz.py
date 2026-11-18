@@ -120,27 +120,34 @@ def _rows(data: bytes) -> list[list[str]]:
         raise ValueError(f"unreadable transcript: {error}") from None
 
 
-def read_turns(data: bytes) -> pd.DataFrame:
+def read_turns(data: bytes, not_turns: re.Pattern[str] | None = None) -> pd.DataFrame:
     """Return a transcript's turns with their times and speaker, but none of their words.
 
     Rows that are too short or whose times are not two numbers in order are left out;
-    ``turn_counts`` counts them.
+    ``turn_counts`` counts them. With ``not_turns``, rows whose text is blank or matches
+    the pattern (sync markers) are left out as well; the text is only tested, never kept.
 
     Args:
         data: The bytes of a DAIC-WOZ transcript file.
+        not_turns: Pattern of the texts that do not make a row a turn, or None to keep
+            every row with valid times.
 
     Returns:
         One row per turn, in time order, with ``start`` and ``stop`` in seconds and
         ``speaker`` in lower case (``ellie``, ``participant`` or another label).
 
     Raises:
-        ValueError: If the header does not name start_time, stop_time and speaker.
+        ValueError: If the header does not name start_time, stop_time and speaker, or
+            ``not_turns`` is given and the header names no value column.
     """
     rows = _rows(data)
     header = [cell.strip().lower() for cell in rows[0]] if rows else []
     if not {"start_time", "stop_time", "speaker"} <= set(header):
         raise ValueError("not a DAIC-WOZ transcript: no start_time, stop_time and speaker")
     i_start, i_stop, i_speaker = (header.index(c) for c in ("start_time", "stop_time", "speaker"))
+    if not_turns is not None and "value" not in header:
+        raise ValueError("not a DAIC-WOZ transcript: no value column to tell turns from markers")
+    i_value = header.index("value") if not_turns is not None else -1
     turns = []
     for row in rows[1:]:
         if len(row) <= max(i_start, i_stop, i_speaker):
@@ -149,6 +156,10 @@ def read_turns(data: bytes) -> pd.DataFrame:
             start, stop = float(row[i_start]), float(row[i_stop])
         except ValueError:
             continue
+        if not_turns is not None:
+            text = row[i_value] if i_value < len(row) else ""
+            if not text.strip() or not_turns.search(text):
+                continue
         if 0.0 <= start <= stop:
             turns.append((start, stop, row[i_speaker].strip().lower()))
     table = pd.DataFrame(turns, columns=["start", "stop", "speaker"])
