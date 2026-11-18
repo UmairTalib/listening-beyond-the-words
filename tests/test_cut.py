@@ -18,8 +18,13 @@ from listening_beyond_words.cut import (
     zone_table,
 )
 from listening_beyond_words.daicwoz import read_turns
-from listening_beyond_words.segments import build_segments, segment_neighbours, segment_walls
-from listening_beyond_words.views import part_windows
+from listening_beyond_words.segments import (
+    build_segments,
+    segment_bounds,
+    segment_neighbours,
+    segment_walls,
+)
+from listening_beyond_words.views import part_windows, segment_windows
 
 HEADER = "start_time\tstop_time\tspeaker\tvalue"
 NORMAL, OFFSET, WITHOUT, INTERRUPTED = 9001, 9002, 9003, 9004
@@ -427,3 +432,22 @@ def test_bad_settings_and_bad_words_are_refused() -> None:
         cut_words(table.assign(end=[2.8, np.nan]), TURNS)
     fallback = CutRule.from_config({**SETTINGS, "guard_ms": 500, "offset_guard_ms": 500})
     assert fallback.guard_for(OFFSET) == fallback.guard_for(NORMAL) == 500
+
+
+def test_windows_stay_inside_the_participants_turns_where_her_turns_are_missing() -> None:
+    times = [(1.0, 1.2), (4.9, 5.1), (7.6, 8.05), (9.05, 9.3), (11.8, 11.95)]
+    decided = cut_words(words(WITHOUT, *times), TURNS)
+    segments = build_segments(decided, n_words=5)
+    segments = segments.merge(segment_neighbours(decided, n_words=5), on="segment")
+    segments = segments.merge(segment_walls(segments, zone_table(TURNS)), on="segment")
+    turns = {WITHOUT: TURNS[WITHOUT].participant / 1000}
+    row = next(segments.merge(segment_bounds(segments, turns), on="segment").itertuples())
+    # Two parts, in the turns 0-8 s and 9-12 s; the word 7.6-8.05 s runs 50 ms past its turn.
+    assert row.starts == [1.0, 9.05]
+    assert row.ends == [8.05, 11.95]
+    unbounded = part_windows(
+        row.starts, row.ends, 20.0, margin=0.1, before=row.before, after=row.after
+    )
+    np.testing.assert_allclose(unbounded, [(0.9, 8.15), (8.95, 12.05)])
+    bounded = segment_windows(row, 20.0, margin=0.1, wall_guard=0.02)
+    np.testing.assert_allclose(bounded, [(0.9, 8.05), (9.0, 12.0)])

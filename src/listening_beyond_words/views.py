@@ -9,7 +9,8 @@ before its first word and after its last word. The margin never reaches more tha
 halfway to the nearest other aligned participant word, kept or dropped by the cut
 rule, which is often in the same line only a few frames away, and never past the
 recording. It stops a little short of the interviewer's turns and the widened
-interruptions. Each part fades in and out so that the joins do not click; where the
+interruptions, and in the sessions without interviewer turns it stops at the edge of
+the participant's turn. Each part fades in and out so that the joins do not click; where the
 full margin fits, the fade lies inside it and never touches a word. The margin, the
 fade and the distance to the interviewer's turns are set in ``configs/pilot/data.yaml``
 (pilot protocol, sections "Speech used" and "Interviewer detector").
@@ -41,6 +42,7 @@ def part_windows(
     others: Sequence[Window] = (),
     walls: Sequence[Window] = (),
     wall_guard: float = 0.0,
+    bounds: Sequence[Window] | None = None,
 ) -> list[Window]:
     """Return the stretch of the recording that each part of a segment keeps.
 
@@ -61,6 +63,9 @@ def part_windows(
             words that the cut rule dropped between its parts.
         walls: (start, end) of stretches that no window may enter.
         wall_guard: Distance in seconds that every window keeps from every wall.
+        bounds: For each part, the (start, end) stretch its window must stay inside,
+            such as its participant turn in the sessions without interviewer turns;
+            None leaves every part unbounded. A bound must hold the part's words.
 
     Returns:
         One (start, end) window per part, in seconds, inside the recording.
@@ -68,7 +73,8 @@ def part_windows(
     Raises:
         ValueError: If there are no parts, a part has no end, the parts are not in
             time order or overlap their neighbours or another word, a part comes
-            within ``wall_guard`` of a wall, or a part lies outside the recording.
+            within ``wall_guard`` of a wall, a bound does not hold its part's words, or
+            a part lies outside the recording.
     """
     starts = [float(start) for start in starts]
     ends = [float(end) for end in ends]
@@ -98,6 +104,18 @@ def part_windows(
                 floor[i] = max(floor[i], float(wall_end) + wall_guard)
             if wall_start >= end:
                 ceiling[i] = min(ceiling[i], float(wall_start) - wall_guard)
+    if bounds is not None:
+        if len(bounds) != len(starts):
+            raise ValueError(f"expected one bound per part, got {len(bounds)} for {len(starts)}")
+        for i, ((bound_start, bound_end), start, end) in enumerate(
+            zip(bounds, starts, ends, strict=True)
+        ):
+            if not bound_start <= start <= end <= bound_end:
+                raise ValueError(
+                    f"bound {bound_start}-{bound_end} does not hold part {start}-{end}"
+                )
+            floor[i] = max(floor[i], float(bound_start))
+            ceiling[i] = min(ceiling[i], float(bound_end))
     windows = []
     for start, end, previous_end, next_start, lowest, highest in zip(
         starts, ends, previous, following, floor, ceiling, strict=True
@@ -125,8 +143,8 @@ def segment_windows(
     Args:
         segment: A row of ``segments.parquet`` (``scripts/build_segments.py``), such as a
             named tuple from ``itertuples``, with the fields ``starts``, ``ends``,
-            ``before``, ``after``, ``other_starts``, ``other_ends``, ``wall_starts`` and
-            ``wall_ends``.
+            ``before``, ``after``, ``other_starts``, ``other_ends``, ``wall_starts``,
+            ``wall_ends``, ``bound_starts`` and ``bound_ends``.
         duration: Length of the session recording in seconds.
         margin: Most audio kept on each side of a part, in seconds.
         wall_guard: Distance in seconds that every window keeps from every wall.
@@ -144,6 +162,7 @@ def segment_windows(
         others=list(zip(segment.other_starts, segment.other_ends, strict=True)),
         walls=list(zip(segment.wall_starts, segment.wall_ends, strict=True)),
         wall_guard=wall_guard,
+        bounds=list(zip(segment.bound_starts, segment.bound_ends, strict=True)),
     )
 
 

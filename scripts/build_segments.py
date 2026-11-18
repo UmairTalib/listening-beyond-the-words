@@ -12,6 +12,7 @@ that every segment can be cut from its recording. Writes
 $LBW_WORKSPACE/derived/segments/run-<UTC time>/ with
   segments.parquet  one row per segment: its parts, the words just outside it, the dropped
                     words between its parts, the interviewer turns next to its parts, the
+                    participant turn that bounds each part where her turns are missing, the
                     x0 window of each part, its length and its words; the listening check
                     and x0 cut exactly these windows
   words.parquet     one row per aligned word: kept or not, its part, its conditions and the
@@ -56,6 +57,7 @@ from listening_beyond_words.segments import (
     GAP_SECONDS,
     SEGMENT_WORDS,
     build_segments,
+    segment_bounds,
     segment_neighbours,
     segment_walls,
 )
@@ -170,6 +172,10 @@ def main() -> None:
         segments = segments.merge(
             segment_walls(segments, zones), on="segment", validate="one_to_one"
         )
+        bounded = {s: turns[s].participant / 1000 for s in PILOT_IDS if turns[s].split_turns}
+        segments = segments.merge(
+            segment_bounds(segments, bounded), on="segment", validate="one_to_one"
+        )
 
         # The x0 window of every part: in order, inside the recording, at most halfway to
         # every other word and at least the wall guard away from every zone. The clips of
@@ -187,8 +193,17 @@ def main() -> None:
             lows.append([low for low, _ in windows])
             highs.append([high for _, high in windows])
             edges += [
-                {"session": int(row.session), "low": low, "high": high, "start": s, "end": e}
-                for (low, high), s, e in zip(windows, row.starts, row.ends, strict=True)
+                {
+                    "session": int(row.session),
+                    "low": low,
+                    "high": high,
+                    "start": s,
+                    "end": e,
+                    "bounded": (low == bound_low) + (high == bound_high),
+                }
+                for (low, high), s, e, bound_low, bound_high in zip(
+                    windows, row.starts, row.ends, row.bound_starts, row.bound_ends, strict=True
+                )
             ]
         cut = pd.DataFrame(edges)
         segments["window_starts"] = lows
@@ -322,6 +337,10 @@ def main() -> None:
             f"part edges with the full {margin} s margin: {full:,} of {len(sides):,};"
             f" median margin {np.median(sides):.3f} s"
         )
+        print(
+            f"part edges stopped at the edge of the participant's turn"
+            f" (sessions without interviewer turns): {int(cut['bounded'].sum())}"
+        )
         past, over = dropped_line_check(lines, cut)
         print(
             f"margins past the halfway point to a line dropped by the interviewer filter: {past};"
@@ -341,6 +360,7 @@ def main() -> None:
             "segments_over_30_s": int((clip_seconds > LONG_SECONDS).sum()),
             "part_edges": len(sides),
             "part_edges_with_full_margin": full,
+            "part_edges_stopped_at_the_participant_turn": int(cut["bounded"].sum()),
             "margins_past_a_dropped_line": past,
             "parts_over_a_dropped_line": over,
         }

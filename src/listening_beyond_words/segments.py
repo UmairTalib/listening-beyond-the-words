@@ -10,6 +10,7 @@ session (fewer than 40) are not used.
 """
 
 import math
+from collections.abc import Mapping
 from typing import Final, cast
 
 import numpy as np
@@ -187,3 +188,46 @@ def segment_walls(segments: pd.DataFrame, zones: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=["segment", "wall_starts", "wall_ends"])
+
+
+def segment_bounds(segments: pd.DataFrame, turns: Mapping[int, np.ndarray]) -> pd.DataFrame:
+    """Return, for every segment, the stretch that each part's window must stay inside.
+
+    In the sessions given in ``turns`` (those without interviewer turns), a part's window
+    stays inside the participant turn that holds its words, widened to the part's own
+    words where a word runs past the turn. Elsewhere a part is unbounded.
+
+    Args:
+        segments: Segments from ``build_segments``.
+        turns: For each bounded session, its participant turns in seconds, merged and in
+            time order, shape (n, 2).
+
+    Returns:
+        One row per segment with the columns ``segment``, ``bound_starts`` and
+        ``bound_ends`` (-inf and inf where a part is unbounded).
+
+    Raises:
+        ValueError: If the middle of a part lies in no turn of its session.
+    """
+    rows = []
+    for segment, session, part_starts, part_ends in zip(
+        segments["segment"].tolist(),
+        segments["session"].tolist(),
+        segments["starts"].tolist(),
+        segments["ends"].tolist(),
+        strict=True,
+    ):
+        lows, highs = [-math.inf] * len(part_starts), [math.inf] * len(part_starts)
+        session_turns = turns.get(int(session))
+        if session_turns is not None:
+            for i, (start, end) in enumerate(zip(part_starts, part_ends, strict=True)):
+                # The part's middle lies between its first and last word's middles, so it
+                # lies in the turn that holds them all.
+                middle = (start + end) / 2
+                k = int(np.searchsorted(session_turns[:, 0], middle, side="right")) - 1
+                if k < 0 or middle > session_turns[k, 1]:
+                    raise ValueError(f"segment {segment}: a part lies in no participant turn")
+                lows[i] = min(float(session_turns[k, 0]), float(start))
+                highs[i] = max(float(session_turns[k, 1]), float(end))
+        rows.append({"segment": segment, "bound_starts": lows, "bound_ends": highs})
+    return pd.DataFrame(rows, columns=["segment", "bound_starts", "bound_ends"])

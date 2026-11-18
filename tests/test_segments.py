@@ -7,6 +7,7 @@ import pytest
 from listening_beyond_words.segments import (
     build_segments,
     in_segment_order,
+    segment_bounds,
     segment_neighbours,
     segment_walls,
 )
@@ -196,3 +197,23 @@ def test_words_that_start_together_are_ordered_by_position_then_line() -> None:
     expected = [1, 5, 7, 3]
     assert in_segment_order(words)["line"].tolist() == expected
     assert in_segment_order(words.iloc[::-1])["line"].tolist() == expected
+
+
+def test_bounds_follow_the_participants_turn_and_its_overhanging_words() -> None:
+    segments = pd.DataFrame(
+        {
+            "segment": ["451_000", "300_000"],
+            "session": [451, 300],
+            "starts": [[1.0, 7.6, 9.2], [1.0]],
+            "ends": [[3.0, 8.05, 11.0], [2.0]],
+        }
+    )
+    turns = {451: np.array([[0.0, 8.0], [9.0, 12.0]])}
+    bounds = segment_bounds(segments, turns).set_index("segment")
+    assert bounds.loc["451_000", "bound_starts"] == [0.0, 0.0, 9.0]
+    assert bounds.loc["451_000", "bound_ends"] == [8.0, 8.05, 12.0]
+    assert bounds.loc["300_000", "bound_starts"] == [-math.inf]
+    assert bounds.loc["300_000", "bound_ends"] == [math.inf]
+    outside = segments.iloc[:1].assign(starts=[[8.2]], ends=[[8.6]])
+    with pytest.raises(ValueError, match="no participant turn"):
+        segment_bounds(outside, turns)

@@ -104,7 +104,7 @@ daicwoz_cut: # docs/pilot_protocol.md, section "Interviewer detector", cut rule 
   guard_ms: 200 # keep a word only if its middle lies in a participant turn and it does not come this close to an interviewer turn
   offset_guard_ms: 400 # the guard in the four offset sessions: other offset estimates lie up to 0.38 s from ours
   interview_only: true # drop words that begin before her first turn starts or end after her last turn ends; not for 451, 458, 480
-  no_interviewer_turns: [451, 458, 480] # here a part also ends between two participant turns
+  no_interviewer_turns: [451, 458, 480] # here a part also ends between two participant turns, and its margins stop at the edge of its turn
   listening: {max_heard: 2, seed: 102, fallback_seed: 104, fallback_guard_ms: 500} # if the check fails: guard widened once, new check
   offsets_s: {318: 34.1, 321: 3.5, 341: 5.9, 362: 16.7} # added to every time in these four transcripts
   timing_check: # written by scripts/check_daicwoz_timing.py; found the offsets above

@@ -236,6 +236,8 @@ def test_segment_windows_read_every_limit_from_the_segment_row() -> None:
         other_ends=[2.5],
         wall_starts=[4.3],
         wall_ends=[5.0],
+        bound_starts=[-math.inf, -math.inf],
+        bound_ends=[math.inf, math.inf],
     )
     windows = segment_windows(row, 10.0, margin=MARGIN, wall_guard=0.02)
     np.testing.assert_allclose(windows, [(0.9, 2.03), (2.9, 4.1)])
@@ -262,3 +264,16 @@ def test_windows_overlap(
 ) -> None:
     assert windows_overlap(first, second) is shared
     assert windows_overlap(second, first) is shared
+
+
+def test_a_bound_keeps_the_window_inside_the_participants_turn() -> None:
+    windows = part_windows(
+        [1.0, 3.0], [2.0, 4.0], 10.0, margin=MARGIN, bounds=[(0.95, 2.0), (2.5, 4.05)]
+    )
+    np.testing.assert_allclose(windows, [(0.95, 2.0), (2.9, 4.05)])
+    free = part_windows([1.0], [2.0], 10.0, margin=MARGIN, bounds=[(-math.inf, math.inf)])
+    np.testing.assert_allclose(free, [(0.9, 2.1)])
+    with pytest.raises(ValueError, match="does not hold"):
+        part_windows([1.0], [2.0], 10.0, margin=MARGIN, bounds=[(1.1, 3.0)])
+    with pytest.raises(ValueError, match="one bound per part"):
+        part_windows([1.0], [2.0], 10.0, margin=MARGIN, bounds=[])
