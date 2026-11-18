@@ -24,9 +24,9 @@ word_times: # aligned from the 70-line selection, job 12503087 (2026-11-18)
   run: derived/word_times/run-12503087 # written by scripts/align_words.py
   sha256: 276fefa36f6483328c86936daa71ada8f10b4a402f45f8c43a1621eb483409fa
 
-segments:
-  run: derived/segments/run-20261112T113215Z # written by scripts/build_segments.py
-  sha256: 937da5c540c4d6df4c8ad4b26e339bb5532b5a0dbc7ba7a933f546102ac389de
+segments: # the speech with the interviewer cut out by the cut rule (built 2026-11-18)
+  run: derived/segments/run-20261118T015451Z # written by scripts/build_segments.py
+  sha256: 3685daf5bb07957187dc64a5a28714c50f432f3b47e4a943b1bbfdbc8ca05d9c
 
 x0_cut: # how a segment's original clip is cut from the recording (src/listening_beyond_words/views.py)
   margin_ms: 100 # most audio kept before a part's first word and after its last word
