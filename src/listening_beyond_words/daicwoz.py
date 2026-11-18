@@ -3,9 +3,11 @@
 Each official session archive ``NNN_P.zip`` holds ``NNN_TRANSCRIPT.csv``, a tab-separated
 table with the columns ``start_time``, ``stop_time``, ``speaker`` (``Ellie`` or
 ``Participant``) and ``value``. Unlike the E-DAIC transcripts, it lists the interviewer's
-lines with their times. The DAIC-WOZ documentation names sessions without Ellie lines
-(451, 458 and 480), sessions whose transcript times are offset from the audio, and sessions
-with interruptions; later steps take those from the documentation, not from this module.
+lines with their times. The DAIC-WOZ documentation names the sessions without Ellie lines
+(451, 458 and 480) and the interruptions (373 and 444); the timing check
+(``scripts/check_daicwoz_timing.py``) found the sessions whose transcript times are offset
+from the audio (318, 321, 341 and 362). Later steps take all of these from
+``configs/pilot/data.yaml`` (``daicwoz_cut``), not from this module.
 """
 
 import csv

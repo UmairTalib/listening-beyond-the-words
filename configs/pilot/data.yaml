@@ -31,7 +31,7 @@ segments:
 x0_cut: # how a segment's original clip is cut from the recording (src/listening_beyond_words/views.py)
   margin_ms: 100 # most audio kept before a part's first word and after its last word
   fade_ms: 10 # fade in and out at both ends of a part, so that the joins do not click
-  wall_guard_ms: 20 # margins stop this far before an interviewer zone
+  wall_guard_ms: 20 # margins stop this far short of an interviewer turn or a widened interruption
 
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
@@ -87,10 +87,24 @@ partitions:
   run: derived/partitions/run-20261112T111941Z # written by scripts/build_partitions.py
   sha256: ec44630d9e1f95aa7ba05db7005c960f42fbd5b456921cd8a314e34cf1fb4ca2
 
-daicwoz_transcripts: # official DAIC-WOZ human transcripts; used only for the interviewer's times (decision of 2026-11-18)
+daicwoz_transcripts: # official DAIC-WOZ human transcripts; used only for the speakers' turn times, never their words (decision of 2026-11-18)
   run: daicwoz/run-20261117T232504Z # written by scripts/extract_daicwoz_transcripts.py
   sha256: f07a7d99080c02e2036df49f52112b2573c8925bac5b7952971a6b0fac97d256 # of its sessions.tsv, which lists every transcript's SHA-256
   extra: # sessions whose official archive is broken on the USC server
     - session: 440
       file: daicwoz/extra-440-20261117T233842Z/440_TRANSCRIPT.csv # verified public copy; see source.json there
       sha256: 194b5ce8af2f8b519cd4e160c0289b08cdfad825194cffd75b9cebe9a41c9f8b
+
+daicwoz_cut: # docs/pilot_protocol.md, section "Interviewer detector", cut rule fixed on 2026-11-18
+  not_turns: '^\W*sync(h|ing|hing)?\W*$' # rows that are blank or whose text matches this (any case) are not turns
+  guard_ms: 200 # keep a word only if its middle lies in a participant turn and it does not come this close to an interviewer turn
+  offset_guard_ms: 400 # the guard in the four offset sessions: other offset estimates lie up to 0.38 s from ours
+  interview_only: true # drop words that begin before her first turn starts or end after her last turn ends; not for 451, 458, 480
+  no_interviewer_turns: [451, 458, 480] # here a part also ends between two participant turns
+  listening: {max_heard: 2, seed: 102, fallback_seed: 104, fallback_guard_ms: 500} # if the check fails: guard widened once, new check
+  offsets_s: {318: 34.1, 321: 3.5, 341: 5.9, 362: 16.7} # added to every time in these four transcripts
+  timing_check: # written by scripts/check_daicwoz_timing.py; found the offsets above
+    run: derived/daicwoz_timing/run-20261117T235320Z
+    sha256: 0c8b0fcc04a705f6cc30ff70acb943dbe76a02c6b43f2cdc4c6d5ded99e2c146 # of its sessions.tsv
+  interruptions_s: {373: [352.0, 420.0], 444: [286.0, 387.0]} # DAIC-WOZ documentation: 5:52-7:00 and 4:46-6:27; treated like interviewer turns
+  interruption_pad_s: 10.0 # added on each side, because the documented times are approximate

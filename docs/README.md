@@ -30,12 +30,13 @@ The thesis gives the motivation, the related work and the complete study design.
 | LoRA | Low-rank adaptation: small trainable matrices added to the frozen weight matrices of the language model. |
 | Participant | One interviewed person, with one interview session. Some pages say person. |
 | Participant score | The mean of z over all of a participant's segments. |
-| Part | The words of a segment that come from one transcript line, with their audio. In a clip, parts are joined by 300 ms of silence. |
+| Part | A run of a segment's words from one transcript line with nothing cut out between them, and their audio. In a clip, parts are joined by 300 ms of silence. |
 | PHQ-8 | An eight-item depression questionnaire. A total of 10 or more is the positive label here. |
 | Segment | Exactly 40 consecutive words of one participant, with their audio. |
 | Stop-gradient | A value that the loss uses but that training does not change through this term. |
 | Study | A set of runs with one protocol: the pilot now, the main study later. |
 | Token | A unit of text that the language model reads or writes. "Yes" and "No" must each be one token. |
+| Turn | One row of a DAIC-WOZ transcript with valid times: the interviewer or the participant speaking. Blank rows and sync markers are not turns. |
 | View | One version of a segment's audio: `x0` original, `x1` re-voiced, `x2` muffled, `rev` reversed. Also called a clip version. |
 | WER | Word error rate: the share of words that speech recognition gets wrong. |
 | Workspace | The storage folder on OMNI that holds all data, caches and runs. It expires unless extended. |
