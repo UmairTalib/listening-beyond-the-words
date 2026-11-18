@@ -1,20 +1,25 @@
-"""Prepare the listening check: 20 random segments, cut as original clips (OMNI login node).
+"""Prepare a blind listening check: 20 random segments, cut as original clips (OMNI login node).
 
 Usage, inside the clone:
     "$UV_PROJECT_ENVIRONMENT/bin/python" scripts/listening_check.py
 
-Reads the pinned segments and word times and the x0 cut settings from
-configs/pilot/data.yaml, draws 20 segments at random, cuts each one as its
-original clip (x0) and writes $LBW_WORKSPACE/derived/listening_check/run-<UTC time>/ with
+Reads the pinned segments, the x0 cut settings, the listening settings
+(``daicwoz_cut.listening``) and the checks already heard (``listening_checks``) from
+configs/pilot/data.yaml. Draws 20 segments at random from those whose audio shares
+nothing with a clip of an earlier check, cuts each one as its original clip (x0) from
+the windows stored with the segments, exactly as x0 is cut, and writes
+$LBW_WORKSPACE/derived/listening_check/run-<UTC time>/ with
   clips/01.wav ... 20.wav  the clips, numbered in the random order of the draw and
                            scaled to a common loudness for listening
   key.tsv                  which segment each clip is; open it only after listening
   run.json                 commit, inputs, settings and counts
 Prints aggregate numbers only: never text, and never one segment's values.
 
-The rule (pilot protocol, section "Speech used"): if another voice than the
-participant's is heard in more than two of the 20 clips, the interviewer filter
-and the cut are reviewed before any training.
+The rule (pilot protocol, section "Interviewer detector", cut rule): the check uses
+seed 102; if another voice than the participant's is heard in more than 2 of the 20
+clips, the guard is widened once to 500 ms, the speech is rebuilt, and 20 new segments
+are checked with seed 104. The script takes seed 104 exactly when the pinned segments
+were built with the widened guard.
 """
 
 import json
@@ -33,39 +38,50 @@ from listening_beyond_words.runinfo import (
     utc_stamp,
     write_json,
 )
-from listening_beyond_words.segments import GAP_SECONDS, segment_neighbours
+from listening_beyond_words.segments import GAP_SECONDS
 from listening_beyond_words.sessions import session_files
 from listening_beyond_words.settings import Workspace, get_workspace
-from listening_beyond_words.views import SAMPLING_RATE, cut_original, part_windows
+from listening_beyond_words.views import SAMPLING_RATE, Window, cut_original, windows_overlap
 
 CONFIG = Path("configs/pilot/data.yaml")
-SEED = 101
 CLIPS = 20
 LISTENING_RMS = 0.1  # common loudness of the listening copies (-20 dBFS) ...
 LISTENING_PEAK = 0.99  # ... unless that would clip; x0 itself keeps the recording's level
 
 
 def load_segments(workspace: Workspace, config: dict) -> pd.DataFrame:
-    """The pinned segments with the times of the kept words just outside each one."""
-    segments_pin, words_pin = config["segments"], config["word_times"]
-    segments_path = workspace.resolve(segments_pin["run"]) / "segments.parquet"
-    words_path = workspace.resolve(words_pin["run"]) / "words.parquet"
-    check_sha256(segments_path, segments_pin["sha256"])
-    check_sha256(words_path, words_pin["sha256"])
-    built_from = json.loads((segments_path.parent / "run.json").read_text(encoding="utf-8"))
-    if built_from["inputs"]["word_times"]["sha256"] != words_pin["sha256"]:
-        raise ValueError("the pinned segments were not built from the pinned word times")
-    segments = pd.read_parquet(segments_path, columns=["segment", "session", "starts", "ends"])
-    neighbours = segment_neighbours(pd.read_parquet(words_path))
-    if sorted(neighbours["segment"]) != sorted(segments["segment"]):
-        raise ValueError("the word times give other segments than the pinned segment file")
-    table = segments.merge(neighbours, on="segment", how="inner", validate="one_to_one")
-    return table.sort_values("segment", ignore_index=True)
+    """The pinned segments, after checking that they come from the pinned inputs and settings."""
+    pin = config["segments"]
+    path = workspace.resolve(pin["run"]) / "segments.parquet"
+    check_sha256(path, pin["sha256"])
+    built = json.loads((path.parent / "run.json").read_text(encoding="utf-8"))
+    for name in ("word_times", "participant_lines"):
+        if built["inputs"][name]["sha256"] != config[name]["sha256"]:
+            raise ValueError(f"the pinned segments were not built from the pinned {name}")
+    for name in ("daicwoz_cut", "x0_cut"):
+        # run.json is JSON, where the session keys of the settings became strings.
+        if built["settings"][name] != json.loads(json.dumps(config[name])):
+            raise ValueError(f"the pinned segments were built with other {name} settings")
+    return pd.read_parquet(path).sort_values("segment", ignore_index=True)
 
 
-def margins(
-    windows: list[tuple[float, float]], starts: list[float], ends: list[float]
-) -> list[float]:
+def heard_windows(workspace: Workspace, checks: list[dict]) -> dict[int, list[Window]]:
+    """The audio windows of every clip of the earlier checks, by session."""
+    heard: dict[int, list[Window]] = {}
+    for check in checks:
+        key = workspace.resolve(check["run"]) / "key.tsv"
+        check_sha256(key, check["sha256"])
+        for segment, windows in pd.read_csv(key, sep="\t")[["segment", "windows"]].itertuples(
+            index=False
+        ):
+            session = int(str(segment).split("_")[0])
+            for window in str(windows).split(";"):
+                low, high = (float(t) for t in window.strip().split("-"))
+                heard.setdefault(session, []).append((low, high))
+    return heard
+
+
+def margins(windows: list[Window], starts: list[float], ends: list[float]) -> list[float]:
     """Audio kept before and after the words of each part, in seconds."""
     return [
         side
@@ -87,20 +103,29 @@ def main() -> None:
     os.umask(0o077)
     workspace = get_workspace()
     config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-    cut = config["x0_cut"]
+    cut, rule = config["x0_cut"], config["daicwoz_cut"]
+    listening = rule["listening"]
     margin, fade = cut["margin_ms"] / 1000, cut["fade_ms"] / 1000
+    checks = config.get("listening_checks") or []
+    widened = rule["guard_ms"] == rule["offset_guard_ms"] == listening["fallback_guard_ms"]
+    if widened and len(checks) < 2:
+        raise ValueError(
+            "the fallback check comes after the seed-102 check: list it in listening_checks"
+        )
+    seed = listening["fallback_seed"] if widened else listening["seed"]
     info: dict[str, object] = {
         "step": "listening_check",
         "status": "running",
         "started_utc": utc_now(),
         "git": git_state(),
         "inputs": {
-            name: {"file": config[name]["run"], "sha256": config[name]["sha256"]}
-            for name in ("segments", "word_times")
+            "segments": {"file": config["segments"]["run"], "sha256": config["segments"]["sha256"]},
+            "heard": checks,
         },
         "settings": {
             "clips": CLIPS,
-            "seed": SEED,
+            "seed": seed,
+            "fallback": widened,
             "x0_cut": cut,
             "gap_seconds": GAP_SECONDS,
             "listening_rms": LISTENING_RMS,
@@ -112,30 +137,42 @@ def main() -> None:
     write_json(run_dir / "run.json", info)
     try:
         table = load_segments(workspace, config)
-        rng = np.random.default_rng(SEED)
-        chosen = table.iloc[rng.choice(len(table), size=CLIPS, replace=False)]
+        heard = heard_windows(workspace, checks)
+        windows_of: list[list[Window]] = [
+            list(zip(map(float, lows), map(float, highs), strict=True))
+            for lows, highs in zip(table["window_starts"], table["window_ends"], strict=True)
+        ]
+        fresh = np.array(
+            [
+                not windows_overlap(windows, heard.get(int(session), []))
+                for windows, session in zip(windows_of, table["session"], strict=True)
+            ]
+        )
+        pool = np.flatnonzero(fresh)
+        rng = np.random.default_rng(seed)
+        chosen = pool[rng.choice(len(pool), size=CLIPS, replace=False)]
         clips_dir = run_dir / "clips"
         clips_dir.mkdir()
         rows: list[dict[str, object]] = []
         kept: list[float] = []
-        for number, row in enumerate(chosen.itertuples(index=False), start=1):
-            audio_path, _ = session_files(workspace.edaic / "sessions", int(row.session))
+        for number, index in enumerate(chosen, start=1):
+            row = table.iloc[index]
+            audio_path, _ = session_files(workspace.edaic / "sessions", int(row["session"]))
             audio, rate = sf.read(audio_path, dtype="float32")
             if rate != SAMPLING_RATE or audio.ndim != 1:
-                raise ValueError(f"session {row.session}: expected {SAMPLING_RATE} Hz mono audio")
-            starts, ends = list(row.starts), list(row.ends)
-            windows = part_windows(
-                starts, ends, len(audio) / rate, margin=margin, before=row.before, after=row.after
-            )
+                raise ValueError(
+                    f"session {row['session']}: expected {SAMPLING_RATE} Hz mono audio"
+                )
+            windows = windows_of[index]
             clip = cut_original(audio, windows, fade=fade, rate=rate)
             gain = listening_gain(clip)
             name = f"{number:02d}.wav"
             sf.write(clips_dir / name, clip * np.float32(gain), rate, subtype="PCM_16")
-            kept += margins(windows, starts, ends)
+            kept += margins(windows, list(row["starts"]), list(row["ends"]))
             rows.append(
                 {
                     "clip": name,
-                    "segment": row.segment,
+                    "segment": row["segment"],
                     "parts": len(windows),
                     "seconds": round(len(clip) / rate, 2),
                     "gain_db": round(20 * np.log10(gain), 1),
@@ -150,16 +187,20 @@ def main() -> None:
         sides = np.array(kept)
         full = int(np.sum(sides >= margin - 1e-9))
         counts = {
-            "segments_in_pool": len(table),
+            "segments": len(table),
+            "segments_sharing_audio_with_heard_clips": int((~fresh).sum()),
+            "segments_in_pool": len(pool),
             "clips": len(key),
-            "sessions": int(chosen["session"].nunique()),
+            "sessions": int(table.iloc[chosen]["session"].nunique()),
             "listening_seconds": round(float(seconds.sum()), 1),
             "part_edges": len(sides),
             "part_edges_with_full_margin": full,
         }
         print(
-            f"clips {counts['clips']} from {counts['sessions']} sessions,"
-            f" drawn from {counts['segments_in_pool']} segments with seed {SEED}"
+            f"clips {counts['clips']} from {counts['sessions']} sessions, drawn with seed {seed}"
+            f" from {counts['segments_in_pool']} of {counts['segments']} segments"
+            f" ({counts['segments_sharing_audio_with_heard_clips']} share audio with the"
+            f" {sum(len(w) for w in heard.values())} windows of {len(checks)} earlier check(s))"
         )
         print(
             f"clip length (s): min {seconds.min():.1f}, median {np.median(seconds):.1f},"
