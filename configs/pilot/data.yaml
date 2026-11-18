@@ -16,9 +16,9 @@ broken_timestamps:
   min_seconds: 30 # a line at least this long ...
   max_words_per_second: 1.0 # ... with fewer words per second has broken timestamps: dropped
 
-participant_lines:
-  run: derived/participant_lines/run-20261112T111930Z # written by scripts/select_lines.py
-  sha256: b0fefb711b148e641664e79392c977a265b4439d195ba00d6a2d876070503a82
+participant_lines: # the selection with 70 of the interviewer's scripted lines (pinned 2026-11-18)
+  run: derived/participant_lines/run-20261112T140122Z # written by scripts/select_lines.py
+  sha256: e4b8ba1c605d6d16a3db60b31eff77d003753e303c74c7aa75407b31d9eb8d18
 
 word_times:
   run: derived/word_times/run-12430801 # written by scripts/align_words.py
