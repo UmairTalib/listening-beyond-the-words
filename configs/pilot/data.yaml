@@ -86,6 +86,8 @@ ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-re
 listening_checks: # blind listening checks already heard; a new check never reuses their audio (scripts/listening_check.py)
   - run: derived/listening_check/run-20261112T122705Z # seed 101, 2026-11-12: another voice in 4 of 20 clips
     sha256: 7fc52e87cf4affbbe245918b2aaa764eeac53341da686aa8fc57b78a333eec98 # of its key.tsv
+  - run: derived/listening_check/run-20261118T015649Z # seed 102, 2026-11-18: another voice in 0 of 20 clips (passed)
+    sha256: 015b4bd5312401430457b184610a1d139df67d17f7df60c6b19c3e284d99e69e # of its key.tsv
 
 bags: # docs/pilot_protocol.md, fixed settings "Segments and bags"; how segments fill bags fixed 2026-11-18
   segments_per_bag: 4

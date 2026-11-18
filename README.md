@@ -53,7 +53,7 @@ where $\hat z$ are standardised per-bag scores (running statistics with stop-gra
 
 ## Results
 
-No results yet. The pilot starts on 2026-11-16. Its aggregate results and the go / no-go decision will appear here and in `reports/pilot/`.
+No results yet. The pilot's aggregate results and the go / no-go decision will appear here and in `reports/pilot/`.
 
 ## Repository layout
 
@@ -83,7 +83,7 @@ The interview data are distributed by USC ICT under a research licence and conta
 
 ## Related publication
 
-An earlier paper on the same corpus measured how much interviewer speech ends up in participant transcripts, the problem that the interviewer filter and detector in this pipeline address:
+An earlier paper on the same corpus measured how much interviewer speech ends up in participant transcripts, the problem that the interviewer filter and the cut by the interviewer's turns in this pipeline address:
 
 U. Oleh, U. Talib, M. A. Alam, and R. Obermaisser, "Leakage-Resilient Diarization and Feature Extraction Framework for Robust Multimodal Mental Health Corpora," in *Proc. 12th Int. Conf. Control, Decision and Information Technologies (CoDIT)*, Bari, Italy, Jul. 2026, pp. 2508–2512, doi: [10.1109/CoDIT70676.2026.11630977](https://doi.org/10.1109/CoDIT70676.2026.11630977).
 
