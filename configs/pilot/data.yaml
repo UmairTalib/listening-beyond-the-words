@@ -20,9 +20,9 @@ participant_lines: # the selection with 70 of the interviewer's scripted lines (
   run: derived/participant_lines/run-20261112T140122Z # written by scripts/select_lines.py
   sha256: e4b8ba1c605d6d16a3db60b31eff77d003753e303c74c7aa75407b31d9eb8d18
 
-word_times:
-  run: derived/word_times/run-12430801 # written by scripts/align_words.py
-  sha256: c62ddab7a5c7f97a20969b662b10203a0045da0e900c31beddf7b4bca7707ff9
+word_times: # aligned from the 70-line selection, job 12503087 (2026-11-18)
+  run: derived/word_times/run-12503087 # written by scripts/align_words.py
+  sha256: 276fefa36f6483328c86936daa71ada8f10b4a402f45f8c43a1621eb483409fa
 
 segments:
   run: derived/segments/run-20261112T113215Z # written by scripts/build_segments.py
