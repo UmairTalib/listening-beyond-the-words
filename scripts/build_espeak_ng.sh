@@ -43,13 +43,16 @@ fi
 set +u  # the module command reads unset variables
 module load cmake/3.19.4
 set -u
-# The options of espeakng-loader 0.2.4 (build.sh and build.yml), except that the system
-# compilers are named and intonations are compiled in the same build as the library.
+# The options of espeakng-loader 0.2.4 (build.sh), with three differences: the system
+# compilers are named; position-independent code is asked for, because unlike Ubuntu's
+# gcc the system gcc 8.5 does not make it by default, and the sonic objects then cannot
+# be linked into the shared library; and ENABLE_TESTS and COMPILE_INTONATIONS are left
+# out, because the CMake files of this commit do not read them.
 cmake -S "$build/src" -B "$build/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
   -DCMAKE_C_FLAGS=-pthread -DCMAKE_EXE_LINKER_FLAGS=-pthread \
-  -DBUILD_SHARED_LIBS=ON -DENABLE_TESTS=OFF -DCOMPILE_INTONATIONS=ON \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=ON \
   -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib
 cmake --build "$build/build" --parallel 4
 cmake --install "$build/build"
