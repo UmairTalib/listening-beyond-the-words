@@ -2,15 +2,20 @@
 
 ``configs/pilot/models.yaml`` lists the pins. ``scripts/fetch_models.py`` downloads
 them on an OMNI login node into the workspace's Hugging Face folder, and jobs load
-them from there without network access.
+them from there without network access. ``check_weights`` tells whether a loaded
+model holds every weight of its file.
 """
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import yaml
+
+if TYPE_CHECKING:
+    import torch
 
 _COMMIT: Final = re.compile(r"[0-9a-f]{40}")
 
@@ -88,3 +93,100 @@ def local_snapshot(pin: ModelPin, hf_home: Path) -> Path:
             "fetch it on a login node with: python scripts/fetch_models.py"
         )
     return folder
+
+
+@dataclass(frozen=True, slots=True)
+class WeightCheck:
+    """How a loaded model compares with its weights file.
+
+    ``ok`` is True when no weight is missing, unused or changed: the file names every
+    weight that matters, each file tensor has a place in the model, and loading the
+    file again changed nothing, so the model's own loader had put every tensor there.
+
+    Attributes:
+        tensors: Number of tensors in the file.
+        missing: Model weights that the file does not name; they keep their initial values.
+        unused: File tensors that the model has no place for.
+        changed: Model weights that loading the file again changed, so the model's own
+            loader had not put the file's values there.
+        fixed_buffers: File tensors for buffers that the model computes itself
+            (non-persistent buffers, such as position indices) and that equal the
+            model's own values; they are not loaded.
+        identity_norms: Scale and shift weights of instance norms that the file does not
+            name and that still hold exactly 1 and 0, so that each norm computes the same
+            as it would without them. They do not count as missing.
+    """
+
+    tensors: int
+    missing: tuple[str, ...]
+    unused: tuple[str, ...]
+    changed: tuple[str, ...]
+    fixed_buffers: tuple[str, ...]
+    identity_norms: tuple[str, ...]
+
+    @property
+    def ok(self) -> bool:
+        """True if no weight is missing, unused or changed."""
+        return not (self.missing or self.unused or self.changed)
+
+
+def check_weights(module: "torch.nn.Module", state: Mapping[str, "torch.Tensor"]) -> WeightCheck:
+    """Check that a model's own loader put every tensor of its file in place.
+
+    Some loaders skip tensors whose names do not match without saying so; Kokoro 0.9.4
+    falls back to ``strict=False``. This loads the file's tensors into the model again
+    and compares every weight before and after, so a weight that the model's own loader
+    left out shows up as changed, missing or unused. Run it right after loading, before
+    the model is used; the model then holds the file's values. It does not see dtype
+    casts made while loading, nor weights tied to one another.
+
+    Instance-norm scale and shift weights that the file does not name are accepted while
+    they hold exactly 1 and 0. Kokoro 0.9.4 gives every AdaIN norm these weights
+    (``affine=True``, a workaround in its ``istftnet.py``), while its file was trained
+    without them; at 1 and 0 the norm computes exactly what it would without them.
+
+    Args:
+        module: The model, after its own loader ran.
+        state: The file's tensors, named as in ``module.state_dict()``.
+
+    Returns:
+        The comparison.
+
+    Raises:
+        RuntimeError: If a file tensor's shape does not match the model's weight.
+    """
+    import torch
+
+    def same(a: torch.Tensor, b: torch.Tensor) -> bool:
+        return a.dtype == b.dtype and a.shape == b.shape and torch.equal(a, b)
+
+    norms = (torch.nn.InstanceNorm1d, torch.nn.InstanceNorm2d, torch.nn.InstanceNorm3d)
+    modules = dict(module.named_modules())
+
+    def at_identity(name: str) -> bool:
+        owner, _, leaf = name.rpartition(".")
+        norm = modules.get(owner)
+        if not isinstance(norm, norms) or not norm.affine or leaf not in ("weight", "bias"):
+            return False
+        return bool(torch.all(getattr(norm, leaf) == (1.0 if leaf == "weight" else 0.0)))
+
+    before = {name: tensor.detach().clone() for name, tensor in module.state_dict().items()}
+    result = module.load_state_dict(dict(state), strict=False)
+    after = module.state_dict()
+    buffers = dict(module.named_buffers())
+    fixed = [
+        name
+        for name in result.unexpected_keys
+        if name in buffers and same(buffers[name], state[name].to(buffers[name].device))
+    ]
+    identity = [name for name in result.missing_keys if at_identity(name)]
+    return WeightCheck(
+        tensors=len(state),
+        missing=tuple(sorted(set(result.missing_keys) - set(identity))),
+        unused=tuple(sorted(set(result.unexpected_keys) - set(fixed))),
+        changed=tuple(
+            sorted(name for name, tensor in after.items() if not same(before[name], tensor))
+        ),
+        fixed_buffers=tuple(sorted(fixed)),
+        identity_norms=tuple(sorted(identity)),
+    )

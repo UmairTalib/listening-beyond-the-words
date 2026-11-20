@@ -25,3 +25,19 @@ wav2vec2_960h:
 wavlm_sv:
   repo_id: microsoft/wavlm-base-plus-sv
   revision: "feb593a6c23c1cc3d9510425c29b0a14d2b07b1e"
+
+# Text-to-speech for the re-voiced clips (x1), run by the kokoro package. Jobs pass
+# it local file paths, because the package itself downloads without a revision.
+kokoro:
+  repo_id: hexgrad/Kokoro-82M
+  revision: "f3ff3571791e39611d31c381e3a41a3af07b4987"
+  # Audio samples and evaluation files of the model card, not needed to synthesise.
+  ignore:
+    - samples/*
+    - eval/*
+
+# Whisper large-v3 converted for CTranslate2: the other recogniser of the word check
+# (F4) and of the x1 checks, run with faster-whisper.
+faster_whisper:
+  repo_id: Systran/faster-whisper-large-v3
+  revision: "edaa852ec7e145841d8ffdb056a99866b5f0a478"
