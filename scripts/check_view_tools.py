@@ -12,9 +12,11 @@ space. Each check runs even when another one fails:
                    weight (Kokoro 0.9.4 skips mismatched weights without a word). The
                    only exception: the scale and shift weights that Kokoro adds to its
                    AdaIN norms (istftnet.py) are not in the file and must hold 1 and 0
-  espeak_fallback  the espeak fallback for words outside Kokoro's lexicon is on, and an
-                   invented word gets sounds (without it such words are dropped silently);
-                   if it is off, the job logs the real reason, which Kokoro would hide
+  espeak_fallback  the espeak fallback for words outside Kokoro's lexicon is on, using the
+                   espeak-ng 1.52.0 built in the workspace (the bundled one needs glibc 2.29,
+                   which OMNI lacks), and an invented word gets sounds (without the fallback
+                   such words are dropped silently); if it is off, the job logs the real
+                   reason, which Kokoro would hide
   kokoro_render   every candidate voice renders the text, and every word gets sounds
   faster_whisper   Whisper large-v3 runs offline in float16 on the GPU (beam 5,
                    temperature 0, no conditioning on earlier text, no voice-activity
@@ -51,6 +53,7 @@ import soxr
 import torch  # imported before faster_whisper, so that CTranslate2 finds PyTorch's cuBLAS
 
 from listening_beyond_words.alignment import WordAligner
+from listening_beyond_words.espeak import use_workspace_espeak
 from listening_beyond_words.models import check_weights, load_pins, local_snapshot
 from listening_beyond_words.runinfo import git_state, sha256_file, utc_now, write_json
 from listening_beyond_words.settings import get_workspace
@@ -302,26 +305,45 @@ def main() -> None:
     def espeak_fallback(check: Check) -> None:
         from kokoro import KPipeline
         from misaki.espeak import EspeakFallback
+        from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
+        # The espeak-ng bundled with misaki needs glibc 2.29, which OMNI lacks: point
+        # misaki at the workspace build before the pipeline builds its fallback.
+        try:
+            use_workspace_espeak(workspace)
+            espeak = EspeakWrapper()
+            check.numbers.update(
+                espeak_version=".".join(str(part) for part in espeak.version),
+                espeak_library=str(espeak.library_path),
+            )
+            problem = ""
+        except Exception as error:  # the pipeline is still built, so the renders can run
+            traceback.print_exc()
+            problem = f"workspace espeak-ng not usable: {type(error).__name__}: {error}"
         # Kokoro's logger is switched off, so its "EspeakFallback not Enabled" warning
         # never shows: check the fallback object itself.
         pipeline = KPipeline(
             lang_code="a", repo_id=pins["kokoro"].repo_id, model=kokoro.get("model", False)
         )
         kokoro["pipeline"] = pipeline
+        if problem:
+            check.ok = False
+            check.detail = problem
+            return
         fallback = pipeline.g2p.fallback
         if fallback is None:
             # Kokoro swallowed the error, and phonemizer would replace it with "espeak not
             # installed": load the library directly so that its own error ends the check.
-            from phonemizer.backend.espeak.wrapper import EspeakWrapper
-
-            EspeakWrapper()  # misaki.espeak set the bundled library and data paths on import
+            EspeakWrapper()
             EspeakFallback(british=False)
         _, tokens = pipeline.g2p(INVENTED_WORD)
         sounds = "".join(token.phonemes or "" for token in tokens)
         check.ok = isinstance(fallback, EspeakFallback) and bool(sounds.strip())
-        check.numbers = {"fallback": type(fallback).__name__, "invented_word_sounds": sounds}
-        check.detail = f"fallback {type(fallback).__name__}; '{INVENTED_WORD}' gets '{sounds}'"
+        check.numbers.update(fallback=type(fallback).__name__, invented_word_sounds=sounds)
+        check.detail = (
+            f"espeak-ng {check.numbers['espeak_version']} from the workspace;"
+            f" fallback {type(fallback).__name__}; '{INVENTED_WORD}' gets '{sounds}'"
+        )
 
     def kokoro_render(check: Check) -> None:
         if "model" not in kokoro or "pipeline" not in kokoro:

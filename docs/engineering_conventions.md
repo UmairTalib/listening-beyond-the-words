@@ -90,7 +90,7 @@ export UV_NO_SYNC=1
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Then, on a login node, inside the clone in your home folder, run `bash scripts/setup_omni_env.sh`. It installs uv if needed, builds the environment in the workspace from `uv.lock` and checks that PyTorch has V100 kernels. Run it again after every pull that changes `uv.lock`, and after a move to a new workspace.
+Then, on a login node, inside the clone in your home folder, run `bash scripts/setup_omni_env.sh`. It installs uv if needed, builds the environment in the workspace from `uv.lock` and checks that PyTorch has V100 kernels. It also builds espeak-ng 1.52.0 into the workspace once, with `scripts/build_espeak_ng.sh`, and checks that Kokoro's text front end uses it. The espeak-ng library that comes with that front end needs glibc 2.29, and OMNI has 2.28. Run the setup script again after every pull that changes `uv.lock`, and after a move to a new workspace.
 
 `UV_NO_SYNC=1` stops a bare `uv run` from changing the environment. Only the setup script and `make env` change it.
 
@@ -195,7 +195,7 @@ $LBW_WORKSPACE/
   runs/<study>/<run_id>/  checkpoints, metrics.jsonl, run.log, scores, run.json
   hf/                     pinned model snapshots (HF_HOME)
   logs/slurm/             Slurm logs
-  env/                    environment and uv cache, rebuilt by scripts/setup_omni_env.sh
+  env/                    environment, uv cache and espeak-ng, rebuilt by scripts/setup_omni_env.sh
 ```
 
 - A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` and `daicwoz/raw/` can be rebuilt from git and the raw data.

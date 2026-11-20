@@ -68,6 +68,11 @@ class Workspace:
         """Slurm job logs."""
         return self.root / "logs"
 
+    @property
+    def espeak(self) -> Path:
+        """espeak-ng built for OMNI by ``scripts/build_espeak_ng.sh``: ``lib/`` and ``share/``."""
+        return self.root / "env" / "espeak-ng"
+
     def resolve(self, relative: str | Path) -> Path:
         """Turn a workspace-relative path from a config into an absolute path.
 
