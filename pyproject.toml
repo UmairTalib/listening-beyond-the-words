@@ -20,6 +20,7 @@ dependencies = [
     "transformers==5.22.2",
     # Data, audio and statistics: lower bounds here, exact versions in uv.lock.
     "huggingface-hub>=1.31",
+    "jiwer>=4.0",  # word error rate; in the main set so the word-check tests run on the Mac and in CI
     "numpy>=2.3",
     "pandas>=3.0",
     "pyarrow>=25.0",
@@ -37,13 +38,14 @@ cpu = ["torch==2.14.1", "torchaudio==2.11.0"]
 cu126 = ["torch==2.14.1", "torchaudio==2.11.0"]
 # Tools for clip building, the word check and the encoder probe (OMNI only).
 # en-core-web-sm is the spaCy model of the Kokoro text front end; installing it
-# from its release wheel means jobs never download it.
+# from its release wheel means jobs never download it. opensmile gives the eGeMAPS
+# voice measures of the x1 check; its licence allows research use, not commercial use.
 pipeline = [
     "en-core-web-sm==3.8.0",
     "faster-whisper==1.2.1",
-    "jiwer>=4.0",
     "kokoro==0.9.4",
     "misaki[en]==0.9.4",
+    "opensmile==2.6.0",
     "praat-parselmouth>=0.4.7",
 ]
 
