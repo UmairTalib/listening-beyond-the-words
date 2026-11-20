@@ -33,6 +33,21 @@ x0_cut: # how a segment's original clip is cut from the recording (src/listening
   fade_ms: 10 # fade in and out at both ends of a part, so that the joins do not click
   wall_guard_ms: 20 # margins stop this far short of an interviewer turn or a widened interruption
 
+views: # docs/pilot_protocol.md, section "Clip versions"; fixed on 2026-11-20, before any view is built
+  peak_limit: 0.99 # after its RMS is set, an x1 or x2 clip whose peak is above this is scaled down to it as a whole; such clips are counted
+  flac_bits: 16 # every view is stored as 16-bit FLAC, with a manifest: each file's length, RMS, peak and SHA-256, and each part's start and end sample
+  x2: # muffled: each part of x0 is filtered on its own, then the clip's RMS is set to x0's
+    cutoff_hz: 400 # low-pass, the -3 dB point of each pass (pilot protocol, fixed settings "Views")
+    butterworth_order: 8 # of each pass; run forwards and backwards, so that nothing shifts in time (6 dB down at cutoff_hz in all)
+  rev: # reversed: each part's audio before its fades, played backwards window by window, then x0's fades (x0_cut.fade_ms)
+    window_ms: 250 # windows start at each part's first sample; a shorter last window is reversed too (pilot protocol, section "Design")
+    # The backup of check F4, built only if rev fails the check: each whole part played backwards, also before the fades.
+
+word_check: # docs/pilot_protocol.md, check F4 and section "Clip versions"
+  sample: # the segments that the word check transcribes
+    seed: 105
+    segments_per_participant: 5 # all of a participant's segments if fewer
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet
