@@ -21,40 +21,48 @@ This file says how the repository is organised and how work moves from the Mac t
 
 ```text
 .github/                     CI workflow and pull request template
-configs/<study>/             experiment configs, one YAML file per experiment
+configs/<study>/             settings and pins: data.yaml (data, cut, clip versions, file
+                             hashes) and models.yaml (model revisions)
 docs/                        pilot protocol, these conventions and the glossary
-reports/<study>/             aggregate results only: tables and figures
-scripts/                     shell scripts for OMNI: download, unpack, environment
+reports/<study>/             aggregate results only: tables and figures (from the first results)
+scripts/                     one Python script per pipeline step, and shell scripts for OMNI
+                             (download, unpack, environment)
 scripts/slurm/               Slurm job files, common.sh and submit.sh
 scripts/check_commit_msg.py  the commit-msg hook
-src/listening_beyond_words/  the package
+src/listening_beyond_words/  the package, one flat module per topic
 tests/                       pytest suite, synthetic data only
 ```
 
 Inside the package:
 
 ```text
-settings.py   workspace paths, read from LBW_WORKSPACE
-config.py     typed config dataclasses and the YAML loader
-runinfo.py    seeds and the run record (run.json)
-cli.py        the lbw command, one subcommand per pipeline step
-data/         E-DAIC access, labels, partitions, word times, segments
-views/        re-voiced, muffled and reversed clips; the word check
-model/        Voxtral loading, prompt and score, LoRA, encoder cache
-training/     bag sampler, losses (cross-entropy and CPG gain), training loop
-evaluation/   person scores, AUROC, bootstrap, report tables
-pipeline/     one module per pipeline step
+settings.py      workspace paths, read from LBW_WORKSPACE
+runinfo.py       time, commit, per-item seeds, file hashes, environment and run.json
+sessions.py      the 189 pilot sessions and the guard that refuses every other session
+labels.py        PHQ-8 labels of the pilot
+partitions.py    participants split into folds
+transcripts.py   E-DAIC transcripts and the word normalisation
+daicwoz.py       DAIC-WOZ transcripts: the speakers' turns and their times
+interviewer.py   the interviewer filter (speaker verification)
+ellie.py         the interviewer detector of 2026-11-13, stopped at its first gate
+alignment.py     forced alignment of the words to the audio
+cut.py           the cut rule: which words stay, and where a part ends
+segments.py      40-word segments and what lies around their parts
+views.py         the clip versions: x0, x2 and rev, their levels and 16-bit samples
+clips.py         the files around the clips: recordings, segments, listening keys, FLAC
+wordcheck.py     the word check (check F4 and the checks of x1)
+models.py        pinned model revisions and the check of loaded weights
+voxtral.py       Voxtral loading, prompt and score
+espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 
-So far the package holds only `settings.py`. The other modules, the configs and the pipeline job files described on this page are the planned layout; each arrives with its code.
-
-- Library modules hold pure functions and classes. They take arrays, tensors and dataclasses, not file paths, so tests can call them with synthetic data.
-- `pipeline/` modules do the reading and writing. Each step reads one config, calls the library, writes into its own workspace folder and leaves a `run.json` there.
-- The pipeline steps are `inventory`, `labels`, `partitions`, `align`, `segments`, `views`, `wordcheck`, `cache`, `zeroshot`, `train`, `score`, `evaluate`, `probe` and `report`. Each step has one name, used everywhere: the subcommand (`lbw segments`), the module (`pipeline/segments.py`), the job file (`scripts/slurm/segments.sbatch`), the job name (`lbw-segments`) and the output folder.
-- Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`. They predate the step and job-file rules below.
-- `cli.py` and the `lbw` entry in `[project.scripts]` land in the same commit.
+- Library modules hold functions and classes. Most take arrays, tables and dataclasses, not file paths, so tests can call them with synthetic data. A few named readers and writers take paths, such as `sessions.session_files`, `clips.read_session`, `clips.write_view` and `transcripts.read_transcript`.
+- Each pipeline step is one script in `scripts/`, named after what it does: `build_segments.py`, `build_views.py`, `draw_wordcheck_sample.py`. A step reads `configs/pilot/data.yaml`, calls the library, writes a new folder in the workspace named after what it holds (`derived/segments/run-<UTC time>/`, `views/<view>/run-<job id>/`) and leaves a `run.json` there (section 8). It prints aggregate numbers only.
+- A step that needs a GPU, or that runs for more than a few minutes on a CPU, also has a job file of the same name, `scripts/slurm/<step>.sbatch`, with the job name `lbw-<step>` in hyphens (`lbw-build-views`). Shorter steps run on a login node; their docstring says so.
+- Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
+- The training steps are still to come. Where sections 4, 5, 8 and 9 describe them (logging to `run.log`, `config.py` and the arm configs, `runinfo.seed_everything`, the `--allow-dirty` option and the train job), they give the plan, and each part arrives with its code.
 
 ## 2. Environment
 
@@ -145,7 +153,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 ### Logging
 
 - Each module gets its logger with `logger = logging.getLogger(__name__)`. Library code never prints.
-- `lbw` sets up logging once: level INFO (DEBUG with `--verbose`), the format `%(asctime)s %(levelname)s %(name)s: %(message)s`, to stderr (the Slurm log) and to `run.log` in the run folder.
+- The training steps set up logging once: level INFO (DEBUG with `--verbose`), the format `%(asctime)s %(levelname)s %(name)s: %(message)s`, to stderr (the Slurm log) and to `run.log` in the run folder. The data steps built so far print aggregate numbers only.
 - Training metrics go to `metrics.jsonl` in the run folder, one JSON object per logged step. No external trackers.
 - Logs never contain transcript text or audio content. Participant IDs may appear in workspace logs, which never go into git.
 
@@ -159,7 +167,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 - A value taken from the method cites its source in a comment, for example `# pilot protocol, fixed settings`.
 - Model revisions are commit hashes, never `main`.
 - Paths in configs are relative to the workspace root.
-- The run record stores the resolved config and its SHA-256 (canonical JSON, sorted keys). Folder names use the first 12 characters of the hash.
+- The run record stores the resolved config and its SHA-256 (canonical JSON, sorted keys). Training run folders use the first 12 characters of the hash.
 
 The pilot configs:
 
@@ -208,7 +216,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - Never commit audio, transcripts, clip versions, features, caches, checkpoints, labels, partitions, segment manifests, per-person or per-segment scores, the USC download link, approval e-mails or secrets.
 - `.gitignore` and two hooks guard this. `forbid-data-files` blocks audio, tensor, checkpoint, archive and notebook files. `forbid-tables-outside-reports` blocks CSV, TSV and JSONL files outside `reports/`.
 - `reports/` holds aggregate numbers only: per-fold AUROC, means, intervals and figures. Report writers refuse columns that identify a person or a segment (`pid`, `segment_id`).
-- Sessions 600–718 are never opened or used before the external test. The download script fetches them and records their sizes and checksums; on OMNI they stay packed and locked (no read permission). Apart from the download and unpack scripts, all code that touches E-DAIC files goes through one module, `data/edaic.py`. It accepts only the 189 pilot IDs (300–492 without 342, 394, 398 and 460) and raises an error for any other ID.
+- Sessions 600–718 are never opened or used before the external test. The download script fetches them and records their sizes and checksums; on OMNI they stay packed and locked (no read permission). Apart from the download and unpack scripts, all code that opens a session's files (recording and transcript) goes through `sessions.py`. Its `session_files` gives a session's paths only for the 189 pilot IDs (300–492 without 342, 394, 398 and 460) and raises an error for any other ID; `clips.read_session` reads a recording through it. The label files also hold rows of other sessions: `labels.py` reads them and keeps only the pilot IDs (`sessions.PILOT_IDS`) right after reading.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
 - Data never leaves OMNI: no copies to the Mac, no external services, no hosted notebooks, no online trackers.
 - Files are private: scripts and jobs set `umask 077`.
@@ -235,15 +243,17 @@ Only code, configs, documentation and aggregate numbers go into git.
 | `environment` | Python, `uv.lock` SHA-256, torch, transformers, peft and numpy versions, CUDA, cuDNN, GPU and driver |
 | `slurm` | job ID, array task ID and node |
 
+The data steps built so far record the fields that apply to them: `config` holds the file and its SHA-256, `settings` the values used, and `environment` the packages they use.
+
 - `train`, `score` and `evaluate` refuse to start when the checkout has uncommitted changes. Their `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
 - Partitions are saved with their SHA-256 before any training. `configs/pilot/data.yaml` records the hashes, and training stops when a partition file does not match.
 - Settings freeze (week 3): the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then release 0.1.0 as described in section 13: a `chore(release): 0.1.0` commit tagged `v0.1.0`. Every later pilot run uses this tag or a later `0.1.x`. No setting changes after test scores are seen.
 
 ## 9. Slurm jobs
 
-- One job file per pipeline step: `scripts/slurm/<step>.sbatch`. Job names are `lbw-<step>`, plus the arm where it helps (`lbw-train-cpg`).
+- A step that needs a GPU, or that runs for more than a few minutes on a CPU, has one job file, `scripts/slurm/<step>.sbatch` (section 1); shorter steps run on a login node. Job names are `lbw-<step>` in hyphens, plus the arm where it helps (`lbw-train-cpg`).
 - Submit with `scripts/slurm/submit.sh [--option=value ...] <step> [arguments]`. It refuses a checkout with uncommitted changes, sends the log to `$LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log` and records the commit for the job to check.
-- Every job file has this shape:
+- Every job file has this shape, shown here for the planned train job:
 
 ```bash
 #!/usr/bin/env bash
@@ -268,7 +278,7 @@ source scripts/slurm/common.sh
 
 config="${1:?usage: train.sbatch <config>}"
 task="${SLURM_ARRAY_TASK_ID:?submit this job as an array}"
-lbw train --config "$config" --round $((task / 5 + 1)) --fold $((task % 5 + 1))
+python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((task % 5 + 1))
 ```
 
 - Order: shebang, a comment with the purpose, how to submit and any array mapping, then the `#SBATCH` lines. Slurm stops reading `#SBATCH` lines at the first command.
@@ -280,8 +290,8 @@ lbw train --config "$config" --round $((task / 5 + 1)) --fold $((task % 5 + 1))
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module: `tests/test_<module>.py`. Shared fixtures live in `tests/conftest.py`.
-- Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`.
+- Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.
 - Test names say what must hold, for example `test_revoiced_clip_gets_no_gradient_from_the_gain`.
