@@ -4,10 +4,12 @@ Synthetic data only. The lines hold the word SECRET, which stands for participan
 text: no output that may leave OMNI may contain it.
 """
 
+import importlib.util
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -317,3 +319,96 @@ def fake_kokoro(pipeline: FakePipeline | None = None, settings: Any = None) -> A
         1.0,
         identity,
     )
+
+
+def load_script(name: str) -> ModuleType:
+    """A step script from scripts/, loaded as a module."""
+    spec = importlib.util.spec_from_file_location(f"script_{name}", REPO / "scripts" / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def patch_script(
+    module: ModuleType,
+    workspace: X1Workspace,
+    monkeypatch: Any,
+    pipeline: FakePipeline | None = None,
+    commit: str = "c" * 40,
+) -> FakePipeline:
+    """Point a script at the synthetic workspace, a clean checkout and a stand-in for Kokoro."""
+    from listening_beyond_words import revoice
+
+    used = pipeline or FakePipeline()
+    monkeypatch.setattr(sys, "unraisablehook", sys.unraisablehook)  # main() replaces it
+    monkeypatch.setattr(module, "CONFIG", workspace.config_path)
+    if hasattr(module, "MODELS"):
+        monkeypatch.setattr(module, "MODELS", REPO / "configs" / "pilot" / "models.yaml")
+    monkeypatch.setattr(module, "git_state", lambda: {"commit": commit, "dirty": False})
+    if hasattr(module, "stop_on_sigterm"):
+        monkeypatch.setattr(module, "stop_on_sigterm", lambda: None)
+    monkeypatch.setattr(
+        revoice.Kokoro, "load", classmethod(lambda cls, w, pin, s: fake_kokoro(used, s))
+    )
+    monkeypatch.setenv("LBW_WORKSPACE", str(workspace.root))
+    return used
+
+
+CHECK_JOB = "500"
+ARRAY_JOB = "600"
+
+
+def check_dir(workspace: X1Workspace, job: str = CHECK_JOB) -> Path:
+    return workspace.root / "derived" / "revoice_check" / f"run-{job}"
+
+
+def run_check(
+    workspace: X1Workspace,
+    monkeypatch: Any,
+    pipeline: FakePipeline | None = None,
+    job: str = CHECK_JOB,
+) -> Path:
+    """Run the check job on the synthetic workspace; return its run folder."""
+    module = load_script("check_revoice")
+    patch_script(module, workspace, monkeypatch, pipeline)
+    monkeypatch.setenv("SLURM_JOB_ID", job)
+    module.main()
+    return check_dir(workspace, job)
+
+
+def run_task(
+    module: ModuleType,
+    monkeypatch: Any,
+    task: int,
+    array: str = ARRAY_JOB,
+    check: str = f"derived/revoice_check/run-{CHECK_JOB}",
+) -> None:
+    """Run one array task of the build, as Slurm would start it."""
+    monkeypatch.setenv("SLURM_ARRAY_JOB_ID", array)
+    monkeypatch.setenv("SLURM_ARRAY_TASK_ID", str(task))
+    monkeypatch.setenv("SLURM_JOB_ID", str(int(array) + 1 + task))
+    monkeypatch.setattr(sys, "argv", ["build_revoiced.py", check])
+    module.main()
+
+
+def build_all(workspace: X1Workspace, monkeypatch: Any, array: str = ARRAY_JOB) -> Path:
+    """Run the check job and every task of the build; return the build's run folder."""
+    from listening_beyond_words.revoice import TASKS
+
+    run_check(workspace, monkeypatch)
+    module = load_script("build_revoiced")
+    patch_script(module, workspace, monkeypatch)
+    for task in range(TASKS):
+        run_task(module, monkeypatch, task, array)
+    return workspace.root / "views" / "x1" / f"run-{array}"
+
+
+def outside_text(*paths: Path, streams: str = "") -> str:
+    """Everything that may leave OMNI, in lower case: the printed streams and the given files."""
+    texts = [streams]
+    for path in paths:
+        if path.is_file():
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(texts).lower()

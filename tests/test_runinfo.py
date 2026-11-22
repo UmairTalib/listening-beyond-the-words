@@ -146,3 +146,137 @@ def test_error_record_lists_frames_and_types_of_the_whole_chain_but_no_message()
     assert any(line.endswith(" in inner") for line in lines)
     assert any(line.endswith(" in outer") for line in lines)
     assert all(line.startswith("  ") or "." in line for line in lines)
+
+
+def test_slurms_stop_ends_a_step_through_its_error_path() -> None:
+    import signal
+
+    from listening_beyond_words.runinfo import STOPPED, stop_on_sigterm
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        stop_on_sigterm()
+        assert signal.getsignal(signal.SIGTERM) is not previous  # else the signal ends pytest
+        with pytest.raises(SystemExit) as stopped:
+            os.kill(os.getpid(), signal.SIGTERM)
+        assert stopped.value.code == STOPPED
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_write_json_leaves_the_earlier_file_or_none_but_never_half_of_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "run.json"
+    write_json(path, {"status": "running"})
+    real = Path.write_text
+
+    def dying(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        real(self, data[: len(data) // 3], *args, **kwargs)  # type: ignore[arg-type]
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "write_text", dying)
+    with pytest.raises(KeyboardInterrupt):
+        write_json(path, {"status": "done", "counts": list(range(100))})
+    monkeypatch.undo()
+    assert json.loads(path.read_text(encoding="utf-8")) == {"status": "running"}
+    write_json(path, {"status": "done"})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"status": "done"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json"]
+
+
+def test_a_failure_names_its_errors_log_or_hands_its_frames_to_stderr(tmp_path: Path) -> None:
+    from listening_beyond_words.runinfo import Progress, StepError, error_record, record_failure
+
+    def raised(error: BaseException) -> BaseException:
+        try:
+            raise error
+        except BaseException as caught:
+            return caught
+
+    secret = raised(KeyError("SYNTHETICWORD"))
+    folder = tmp_path / "run"
+    folder.mkdir()
+    info: dict[str, object] = {"status": "running"}
+    logged = record_failure(secret, Progress(run_dir=folder, info=info, segment="300_001"))
+    assert (
+        logged.line
+        == f"FAILED: KeyError in segment 300_001; traceback frames in {folder / 'errors.log'}"
+    )
+    assert logged.frames is None  # errors.log holds them
+    assert (folder / "errors.log").read_text(encoding="utf-8") == error_record(secret)
+    stored = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    assert stored["status"] == "failed"
+    assert stored["error"] == {"type": "KeyError", "segment": "300_001", "part": None}
+    # No folder, or one that cannot be written: the frames go to stderr, never the message.
+    for progress in (Progress(), Progress(run_dir=tmp_path / "missing", info={})):
+        unlogged = record_failure(secret, progress)
+        assert unlogged.line == "FAILED: KeyError"
+        assert unlogged.frames == error_record(secret)
+        assert "SYNTHETICWORD" not in unlogged.line + unlogged.frames
+    own = record_failure(raised(StepError("the check run did not pass")), Progress())
+    assert own.line == "FAILED: StepError: the check run did not pass"
+    assert own.frames is None  # the step's own message says what happened
+    foreign = raised(KeyError("x"))
+    foreign.segment = "SYNTHETICWORD"  # type: ignore[attr-defined]
+    foreign.part = "SYNTHETICWORD"  # type: ignore[attr-defined]
+    assert record_failure(foreign, Progress(segment="300_002")).line == (
+        "FAILED: KeyError in segment 300_002"
+    )
+
+
+def test_slurms_stop_is_recorded_by_its_fixed_text_only(tmp_path: Path) -> None:
+    import numpy as np
+
+    from listening_beyond_words.runinfo import STOPPED, Progress, record_failure
+
+    stop = SystemExit("cannot read SYNTHETICWORD")
+    stop.code = STOPPED  # code says Slurm's stop, but the error's own text holds a word
+    info: dict[str, object] = {}
+    line = record_failure(stop, Progress(run_dir=tmp_path, info=info)).line
+    assert line.startswith(f"FAILED: SystemExit: {STOPPED}; traceback frames in")
+    stored = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert stored["error"]["message"] == STOPPED
+    odd = SystemExit(np.array(["SYNTHETICWORD", "x"]))  # a code whose comparison is an array
+    assert record_failure(odd, Progress()).line == "FAILED: SystemExit"
+
+
+def test_a_failure_is_recorded_in_run_json_even_when_errors_log_cannot_be_written(
+    tmp_path: Path,
+) -> None:
+    from listening_beyond_words.runinfo import Progress, record_failure
+
+    (tmp_path / "errors.log").mkdir()  # a folder in its place: the write fails
+    info: dict[str, object] = {"status": "running"}
+    failure = record_failure(KeyError("SYNTHETICWORD"), Progress(run_dir=tmp_path, info=info))
+    assert failure.line == "FAILED: KeyError"
+    assert failure.frames is not None  # so the frames go to stderr instead
+    assert "SYNTHETICWORD" not in failure.frames
+    stored = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert stored["status"] == "failed"
+
+
+def test_error_record_never_asks_an_exception_for_its_truth_value() -> None:
+    from listening_beyond_words.runinfo import error_record
+
+    class OddError(Exception):
+        def __bool__(self) -> bool:
+            raise ValueError("SYNTHETICWORD")
+
+    inner = OddError("SYNTHETICWORD")
+    outer = KeyError("SYNTHETICWORD")
+    outer.__context__ = inner
+    record = error_record(outer)
+    assert record.splitlines()[0] == "builtins.KeyError"
+    assert record.splitlines()[1].endswith("OddError")
+    assert "SYNTHETICWORD" not in record
+
+
+def test_quiet_unraisable_names_the_type_only(capsys: pytest.CaptureFixture[str]) -> None:
+    from types import SimpleNamespace
+
+    from listening_beyond_words.runinfo import quiet_unraisable
+
+    quiet_unraisable(SimpleNamespace(exc_value=ValueError("SYNTHETICWORD"), object="SYNTHETICWORD"))
+    out, err = capsys.readouterr()
+    assert (out, err) == ("", "Exception ignored: ValueError\n")

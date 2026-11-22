@@ -62,6 +62,7 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - Library modules hold functions and classes. Most take arrays, tables and dataclasses, not file paths, so tests can call them with synthetic data. A few named readers and writers take paths, such as `sessions.session_files`, `clips.read_session`, `clips.write_view` and `transcripts.read_transcript`.
 - Each pipeline step is one script in `scripts/`, named after what it does: `build_segments.py`, `build_views.py`, `draw_wordcheck_sample.py`. A step reads `configs/pilot/data.yaml`, calls the library, writes a new folder in the workspace named after what it holds (`derived/segments/run-<UTC time>/`, `views/<view>/run-<job id>/`) and leaves a `run.json` there (section 8). It prints aggregate numbers only.
 - A step that needs a GPU, or that runs for more than a few minutes on a CPU, also has a job file of the same name, `scripts/slurm/<step>.sbatch`, with the job name `lbw-<step>` in hyphens (`lbw-build-views`). Shorter steps run on a login node; their docstring says so.
+- The re-voiced clip `x1` takes three steps. `check_revoice.py` (a job) runs the dry run of Kokoro's text front end and the test render, whose clips the researcher hears. `build_revoiced.py` (an array job of 20 tasks, all at once) writes the clips into `views/x1/run-<array job id>/<session>/` and each task's records into `tasks/<t>/` there. `merge_revoiced.py` (on a login node) checks every task and file and only then writes the run's `manifest.parquet`, `parts.parquet` and, last, its `run.json`, so a run folder with `run.json` is merged. Unlike other steps (section 8), the merge writes `run.json` only at the end, and a refused merge writes nothing. If any task fails, nothing is merged, and the whole array runs again into a new run folder; the merge refuses task folders from another array job.
 - Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
@@ -159,6 +160,7 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 - The training steps set up logging once: level INFO (DEBUG with `--verbose`), the format `%(asctime)s %(levelname)s %(name)s: %(message)s`, to stderr (the Slurm log) and to `run.log` in the run folder. The data steps built so far print aggregate numbers only.
 - Training metrics go to `metrics.jsonl` in the run folder, one JSON object per logged step. No external trackers.
 - Logs never contain transcript text or audio content. Participant IDs may appear in workspace logs, which never go into git.
+- The steps that read transcript text (those of `x1`) never print or store an error's message, because it could hold a word: on any error they print one line with the error's type, the segment and part, and where `errors.log` is, which holds traceback frames and type names only (`runinfo.record_failure`). Where no `errors.log` holds them, as when a job fails before its folder exists or in the merge, which writes nothing when it fails, the frames and type names go to stderr, never the message. The failure is reported outside the `except` clause, so that nothing raised while reporting is chained to the error, and Python's own report of an error in a finaliser is replaced by its type (`runinfo.quiet_unraisable`). Only the steps' own errors (`runinfo.StepError`), whose messages name rules, counts and IDs, are shown in full. What misaki and Kokoro print is caught and counted.
 
 ## 5. Configuration
 
@@ -209,8 +211,8 @@ $LBW_WORKSPACE/
   env/                    environment, uv cache and espeak-ng, rebuilt by scripts/setup_omni_env.sh
 ```
 
-- A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` and `daicwoz/raw/` can be rebuilt from git and the raw data.
-- Before the last extension runs out, allocate a new workspace, copy `edaic/`, `daicwoz/` and `derived/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again.
+- A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` and `daicwoz/raw/` can be rebuilt from git and the raw data, but `x1` not bit for bit: Kokoro's renders depend on the CPU and the number of threads.
+- Before the last extension runs out, allocate a new workspace, copy `edaic/`, `daicwoz/`, `derived/` and `views/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again.
 
 ## 7. Data protection
 
@@ -246,7 +248,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 | `environment` | Python, `uv.lock` SHA-256, torch, transformers, peft and numpy versions, CUDA, cuDNN, GPU and driver |
 | `slurm` | job ID, array task ID and node |
 
-The data steps built so far record the fields that apply to them: `config` holds the file and its SHA-256, `settings` the values used, and `environment` the packages they use.
+The data steps built so far record the fields that apply to them: `config` holds the file and its SHA-256, `settings` the values used, and `environment` the packages they use. `runinfo.write_json` writes a `run.json` in one step, to a temporary file that is then renamed onto it, so a step that dies while writing never leaves half of one; the merge of `x1` counts a run folder with a `run.json` as merged.
 
 - `train`, `score` and `evaluate` refuse to start when the checkout has uncommitted changes. Their `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
 - Partitions are saved with their SHA-256 before any training. `configs/pilot/data.yaml` records the hashes, and training stops when a partition file does not match.

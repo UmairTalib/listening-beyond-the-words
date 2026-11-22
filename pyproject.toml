@@ -139,7 +139,7 @@ allowed-confusables = ["α", "ρ", "σ", "−", "×"]
 "tests/**" = ["D"]
 "scripts/**" = ["D", "T20"]
 # IPA phonemes of the re-voiced clip look like ASCII letters on purpose.
-"tests/{test_revoice,x1_fakes}.py" = ["D", "RUF001", "RUF003"]
+"tests/{test_revoice,test_check_revoice,x1_fakes}.py" = ["D", "RUF001", "RUF003"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

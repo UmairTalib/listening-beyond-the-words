@@ -30,7 +30,7 @@ from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -46,7 +46,12 @@ from listening_beyond_words.clips import (
 from listening_beyond_words.espeak import use_workspace_espeak
 from listening_beyond_words.models import ModelPin, check_weights, local_snapshot
 from listening_beyond_words.runinfo import StepError, item_seed, sha256_file
-from listening_beyond_words.segments import GAP_SECONDS, segment_parts
+from listening_beyond_words.segments import (
+    GAP_SECONDS,
+    SEGMENT_WORDS,
+    in_segment_order,
+    segment_parts,
+)
 from listening_beyond_words.settings import Workspace
 from listening_beyond_words.transcripts import TYPOGRAPHIC_APOSTROPHE, normalise
 from listening_beyond_words.views import (
@@ -750,9 +755,11 @@ class PartError(StepError):
     """A part that could not be rendered or built; the error that stopped it is its context."""
 
     def __init__(self, segment: str, position: int, error: BaseException) -> None:
-        super().__init__(f"segment {segment}, part {position}: {type(error).__name__}")
-        self.segment = segment
-        self.position = position
+        super().__init__(
+            f"segment {segment}, part {position}: {type(error).__name__}",
+            segment=segment,
+            part=position,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1284,6 +1291,77 @@ class Kokoro:
             first_frames=int(durations[0]),
             last_frames=int(durations[-1]),
         )
+
+
+class WordPlaces:
+    """Where every aligned word lies: kept or dropped, in which segment, and in what time order.
+
+    It tells why a part ends inside a transcript token, such as between the "x" and the
+    "ray" of "x-ray", for the counts of the dry run.
+
+    Args:
+        words: The cut words (``clips.load_cut_words``): every aligned word with
+            ``session``, ``line``, ``word_index``, ``start``, ``kept`` and ``cause``.
+        n_words: Words per segment.
+    """
+
+    SEGMENT_EDGE: Final = "a segment boundary"
+    UNUSED: Final = "unused words at the session's end"
+    OTHER_LINE: Final = "a word of another line between them"
+    SAME_SEGMENT: Final = (
+        "another part of the same segment (her turn, an interruption or a turn edge)"
+    )
+    OTHER: Final = "other"
+
+    def __init__(self, words: pd.DataFrame, n_words: int = SEGMENT_WORDS) -> None:
+        self._places: dict[tuple[int, int, int], tuple[int, bool, str | None, str | None]] = {}
+        for session_key, group in in_segment_order(words).groupby("session", sort=True):
+            session = int(cast(int, session_key))
+            kept = group["kept"].to_numpy(dtype=bool)
+            usable = int(kept.sum()) - int(kept.sum()) % n_words
+            causes = group["cause"].tolist()
+            count = 0
+            for order, (line, index, keep, cause) in enumerate(
+                zip(group["line"].tolist(), group["word_index"].tolist(), kept, causes, strict=True)
+            ):
+                segment = None
+                if keep:
+                    segment = f"{session}_{count // n_words:03d}" if count < usable else None
+                    count += 1
+                self._places[(session, int(line), int(index))] = (
+                    order,
+                    bool(keep),
+                    None if keep else str(cause),
+                    segment,
+                )
+
+    def cause(self, session: int, segment: str, line: int, inside: int, outside: int) -> str:
+        """Why a part of a segment ends between two neighbouring words of one line.
+
+        Args:
+            session: The session.
+            segment: The part's segment.
+            line: The line of both words.
+            inside: Index of the part's word next to the edge.
+            outside: Index of its neighbour outside the part.
+
+        Returns:
+            One of the class's causes, or "a dropped word (<cause>)" with the cut rule's
+            cause.
+        """
+        here = self._places.get((session, line, inside))
+        there = self._places.get((session, line, outside))
+        if here is None or there is None:
+            return self.OTHER
+        if not there[1]:
+            return f"a dropped word ({there[2]})"
+        if there[3] is None:
+            return self.UNUSED
+        if there[3] != segment:
+            return self.SEGMENT_EDGE
+        if abs(there[0] - here[0]) > 1:
+            return self.OTHER_LINE
+        return self.SAME_SEGMENT
 
 
 # Inputs ----------------------------------------------------------------------------

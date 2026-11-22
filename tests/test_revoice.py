@@ -284,8 +284,14 @@ def test_a_word_split_at_a_part_edge_is_read_as_its_stored_words_for_every_reaso
     parts = segment_parts(decided.drop(columns=["word"]))
     segments = build_segments(decided)
     split = Counter()
+    causes = Counter()
+    places = revoice.WordPlaces(decided)
     for row in parts.itertuples():
         made = part_text(lines[row.session][row.line], row.first, row.last)
+        if made.split_start:
+            causes[places.cause(row.session, row.segment, row.line, row.first, row.first - 1)] += 1
+        if made.split_end:
+            causes[places.cause(row.session, row.segment, row.line, row.last, row.last + 1)] += 1
         assert (
             normalise(made.text).split()
             == normalise(lines[row.session][row.line]).split()[row.first : row.last + 1]
@@ -299,6 +305,12 @@ def test_a_word_split_at_a_part_edge_is_read_as_its_stored_words_for_every_reaso
         assert split[(session, line, "start")] == 1
     assert split[(NORMAL, 1, "end")] == 1
     assert split[(NORMAL, 1, "start")] == 0
+    assert causes == {
+        revoice.WordPlaces.SEGMENT_EDGE: 2,  # line 0
+        "a dropped word (outside participant turns)": 1,  # line 1
+        revoice.WordPlaces.SAME_SEGMENT: 4,  # her turn in line 2, the turn edge in WITHOUT
+        revoice.WordPlaces.OTHER_LINE: 2,  # line 3
+    }
     for segment, group in parts.groupby("segment"):
         session = int(segment.split("_")[0])
         expected = segments.set_index("segment").loc[segment, "text"]
