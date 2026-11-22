@@ -717,6 +717,19 @@ def test_data_config_pins_the_view_and_sample_settings() -> None:
     assert config["views"] == {
         "peak_limit": 0.99,
         "flac_bits": 16,
+        "x1": {
+            "voices": {"female": ["af_heart", "af_bella"], "male": ["am_michael", "am_fenrir"]},
+            "language": "a",
+            "speed": 1.0,
+            "seed": 106,
+            "kokoro_rate_hz": 24000,
+            "soxr_quality": "HQ",
+            "trim_db": -40,
+            "trim_margin_ms": 10,
+            "rms": 0.05,
+            "threads": 4,
+            "test_render": {"segments": 20, "seed": 106, "repeats": 2, "heard": 10},
+        },
         "x2": {"cutoff_hz": 400, "butterworth_order": 8},
         "rev": {"window_ms": 250},
     }

@@ -36,6 +36,20 @@ x0_cut: # how a segment's original clip is cut from the recording (src/listening
 views: # docs/pilot_protocol.md, section "Clip versions"; fixed on 2026-11-20, before any view is built
   peak_limit: 0.99 # after its RMS is set, an x1 or x2 clip whose peak is above this is scaled down to it as a whole; such clips are counted
   flac_bits: 16 # every view is stored as 16-bit FLAC, with a manifest: each file's length, RMS, peak and SHA-256, and each part's start and end sample
+  x1: # re-voiced (pilot protocol, bullet "Re-voiced clip"; fixed on 2026-11-22, before x1 is built)
+    voices: # Kokoro voices; within each gender, participants ordered by PHQ-8 class (negative first), then ID, alternate between them, starting with the first
+      female: [af_heart, af_bella]
+      male: [am_michael, am_fenrir]
+    language: a # US English (Kokoro's lang_code)
+    speed: 1.0
+    seed: 106 # each part's call: runinfo.item_seed(106, segment ID as text, position of the part in the clip from 0)
+    kokoro_rate_hz: 24000 # Kokoro's output, resampled with soxr to 16 kHz
+    soxr_quality: HQ # soxr's default, written out so that a changed default cannot change x1
+    trim_db: -40 # after resampling, each part is trimmed where it is this far below its peak, sample by sample ...
+    trim_margin_ms: 10 # ... keeping this much beyond the first and last louder sample; x0's fades (x0_cut.fade_ms) fall there
+    rms: 0.05 # of the whole clip, gaps included; then views.peak_limit
+    threads: 4 # PyTorch CPU threads per render (and --cpus-per-task): renders repeat exactly only with the same count on the same CPU
+    test_render: {segments: 20, seed: 106, repeats: 2, heard: 10} # drawn outside the word-check sample
   x2: # muffled: each part of x0 is filtered on its own and gets x0's fades again (x0_cut.fade_ms; added 2026-11-22), then the clip's RMS is set to x0's
     cutoff_hz: 400 # low-pass, the -3 dB point of each pass (pilot protocol, fixed settings "Views")
     butterworth_order: 8 # of each pass; run forwards and backwards, so that nothing shifts in time (6 dB down at cutoff_hz in all)
