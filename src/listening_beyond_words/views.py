@@ -1,4 +1,4 @@
-"""Views of a segment. So far the original clip, x0.
+"""Views of a segment: the original clip x0, the muffled clip x2 and the reversed clip rev.
 
 The original clip is the participant's own audio. Each part of a segment (a run of
 its kept words from one transcript line, ``cut.py``) is cut from the session recording, and the parts
@@ -14,17 +14,28 @@ the participant's turn. Each part fades in and out so that the joins do not clic
 full margin fits, the fade lies inside it and never touches a word. The margin, the
 fade and the distance to the interviewer's turns are set in ``configs/pilot/data.yaml``
 (pilot protocol, sections "Speech used" and "Interviewer detector").
+
+The other views are built from the same parts (pilot protocol, section "Clip
+versions"), so every view has the same pieces at the same places and the same silent
+gaps. x2 filters each faded part of x0 on its own with a low-pass, fades it again
+and joins the parts; the clip then gets the RMS of x0. rev plays each part's audio,
+before its fades, backwards in 250 ms windows from the part's first sample, then fades
+it like x0. The settings are in ``configs/pilot/data.yaml`` (``views``).
 """
 
+import functools
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 
 from listening_beyond_words.segments import GAP_SECONDS
 
 SAMPLING_RATE: Final = 16_000
+PCM16_SCALE: Final = 32_768  # a 16-bit sample n stands for n / 32768
 # Word ends from the aligner can lie up to about 0.6 ms past the last sample.
 END_TOLERANCE_SECONDS: Final = 0.001
 
@@ -315,3 +326,407 @@ def cut_original(
         [fade_part(part, fade=fade, rate=rate) for part in parts], rate=rate, gap=gap
     )
     return clip
+
+
+@functools.lru_cache(maxsize=8)
+def _lowpass(cutoff_hz: float, order: int, rate: int) -> tuple[np.ndarray, int]:
+    """The Butterworth low-pass as second-order sections, and scipy's default padding for it."""
+    sos = butter(order, cutoff_hz, btype="lowpass", fs=rate, output="sos")
+    # sosfiltfilt pads each end by 3 x (2 x sections + 1) samples, less any zero coefficients.
+    taps = 2 * len(sos) + 1 - min(int((sos[:, 2] == 0).sum()), int((sos[:, 5] == 0).sum()))
+    return sos, 3 * taps
+
+
+def muffle(
+    part: np.ndarray, *, cutoff_hz: float, order: int, rate: int = SAMPLING_RATE
+) -> np.ndarray:
+    """Low-pass one part of x2: a Butterworth filter run forwards and then backwards.
+
+    Each pass has the given order and its -3 dB point at ``cutoff_hz``; the two passes
+    together are 6 dB down there and shift nothing in time. The ends are padded as scipy
+    does by default (odd extension). The work is done in float64.
+
+    Args:
+        part: One part as floats, shape (samples,).
+        cutoff_hz: The -3 dB point of each pass in Hz.
+        order: The order of each pass.
+        rate: Sampling rate in Hz.
+
+    Returns:
+        The filtered part as float64, as long as ``part``. ``part`` itself is not changed.
+
+    Raises:
+        ValueError: If ``part`` is not one-dimensional floats, or too short for the
+            filter's padding (27 samples or fewer for order 8).
+    """
+    if part.ndim != 1 or not np.issubdtype(part.dtype, np.floating):
+        raise ValueError(
+            f"expected a part as floats of shape (samples,), got {part.dtype} {part.shape}"
+        )
+    sos, pad = _lowpass(float(cutoff_hz), int(order), int(rate))
+    if len(part) <= pad:
+        raise ValueError(
+            f"a part of {len(part)} samples is too short for the x2 filter, which needs"
+            f" more than {pad}"
+        )
+    # A copy of the cached sections, so that no call can change them for the next.
+    return np.asarray(sosfiltfilt(sos.copy(), part.astype(np.float64)), dtype=np.float64)
+
+
+def reverse_windows(part: np.ndarray, *, window: int) -> np.ndarray:
+    """Play one part backwards window by window (rev).
+
+    The windows start at the part's first sample; a shorter last window is reversed too.
+
+    Args:
+        part: One part, shape (samples,).
+        window: Samples per window.
+
+    Returns:
+        A new array of the same type and length. ``part`` itself is not changed.
+
+    Raises:
+        ValueError: If ``part`` is not one-dimensional or the window is not positive.
+    """
+    if part.ndim != 1:
+        raise ValueError(f"expected a part of shape (samples,), got shape {part.shape}")
+    if window < 1:
+        raise ValueError(f"a window needs at least one sample, got {window}")
+    reversed_part = np.empty_like(part)
+    for start in range(0, len(part), window):
+        reversed_part[start : start + window] = part[start : start + window][::-1]
+    return reversed_part
+
+
+def reverse_whole(part: np.ndarray) -> np.ndarray:
+    """Play one whole part backwards: the backup of check F4, built only if rev fails it.
+
+    Args:
+        part: One part, shape (samples,).
+
+    Returns:
+        A reversed copy. ``part`` itself is not changed.
+
+    Raises:
+        ValueError: If ``part`` is not one-dimensional.
+    """
+    if part.ndim != 1:
+        raise ValueError(f"expected a part of shape (samples,), got shape {part.shape}")
+    return part[::-1].copy()
+
+
+def clip_rms(clip: np.ndarray) -> float:
+    """Return the RMS of a whole clip, gaps included, computed in float64.
+
+    Args:
+        clip: A clip as floats, shape (samples,).
+
+    Returns:
+        The RMS; NaN if the clip holds NaN.
+
+    Raises:
+        ValueError: If the clip is empty.
+    """
+    if clip.size == 0:
+        raise ValueError("an empty clip has no RMS")
+    return float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
+
+
+def clip_peak(clip: np.ndarray) -> float:
+    """Return the largest absolute value of a whole clip, computed in float64.
+
+    Args:
+        clip: A clip as floats, shape (samples,).
+
+    Returns:
+        The peak; NaN if the clip holds NaN.
+
+    Raises:
+        ValueError: If the clip is empty.
+    """
+    if clip.size == 0:
+        raise ValueError("an empty clip has no peak")
+    return float(np.max(np.abs(clip.astype(np.float64))))
+
+
+def set_rms(clip: np.ndarray, target: float) -> tuple[np.ndarray, float]:
+    """Scale a whole clip to a target RMS.
+
+    Args:
+        clip: A clip as floats, shape (samples,).
+        target: The RMS it should have, above 0.
+
+    Returns:
+        The scaled clip as float64 and the gain applied to it.
+
+    Raises:
+        ValueError: If the target is not a positive finite number, or the clip is silent
+            or holds NaN or inf.
+    """
+    if not (math.isfinite(target) and target > 0.0):
+        raise ValueError(f"the target RMS must be a positive number, got {target}")
+    if not np.all(np.isfinite(clip)):
+        raise ValueError("the clip holds NaN or inf")
+    rms = clip_rms(clip)
+    if rms == 0.0:
+        raise ValueError("a silent clip has no RMS to set")
+    gain = target / rms
+    return clip.astype(np.float64) * gain, gain
+
+
+def limit_peak(clip: np.ndarray, limit: float) -> tuple[np.ndarray, float, bool]:
+    """Scale a whole clip down to a peak of ``limit``, only if its peak is above it.
+
+    Args:
+        clip: A clip as floats, shape (samples,).
+        limit: The highest peak allowed, above 0.
+
+    Returns:
+        The clip (scaled, or unchanged as given), the factor applied (1.0 if none), and
+        whether the clip was scaled.
+
+    Raises:
+        ValueError: If the limit is not positive, or the clip holds NaN or inf.
+    """
+    if not (math.isfinite(limit) and limit > 0.0):
+        raise ValueError(f"the peak limit must be a positive number, got {limit}")
+    if not np.all(np.isfinite(clip)):
+        raise ValueError("the clip holds NaN or inf")
+    peak = clip_peak(clip)
+    if peak > limit:
+        factor = limit / peak
+        return clip * factor, factor, True
+    return clip, 1.0, False
+
+
+def to_pcm16(clip: np.ndarray) -> np.ndarray:
+    """Turn a clip into the 16-bit whole numbers that its file stores: round(x * 32768).
+
+    A 16-bit file read as floats gives n / 32768 exactly, so audio read from a 16-bit
+    recording comes back as the same numbers. Values exactly halfway round to even.
+
+    Args:
+        clip: A clip as floats in [-1, 1), shape (samples,).
+
+    Returns:
+        The samples as int16.
+
+    Raises:
+        ValueError: If the clip holds NaN or inf, or a value that rounds outside
+            -32768 to 32767; nothing is clipped silently.
+    """
+    if not np.issubdtype(clip.dtype, np.floating):
+        raise ValueError(f"expected a clip as floats, got {clip.dtype}")
+    scaled = np.rint(clip.astype(np.float64) * PCM16_SCALE)
+    if not np.all(np.isfinite(scaled)):
+        raise ValueError("the clip holds NaN or inf")
+    if scaled.size and (scaled.min() < -PCM16_SCALE or scaled.max() > PCM16_SCALE - 1):
+        raise ValueError(
+            f"the clip runs from {scaled.min() / PCM16_SCALE} to {scaled.max() / PCM16_SCALE},"
+            " outside the 16-bit range"
+        )
+    return scaled.astype(np.int16)
+
+
+def stored_windows(segment: Any) -> list[Window]:
+    """Return the x0 window of each part of one segment, as stored with the segments.
+
+    Args:
+        segment: A row of ``segments.parquet`` with the fields ``window_starts`` and
+            ``window_ends`` (seconds in the session), such as a named tuple from
+            ``itertuples``.
+
+    Returns:
+        One (start, end) window per part.
+    """
+    return list(
+        zip(map(float, segment.window_starts), map(float, segment.window_ends), strict=True)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ViewSettings:
+    """Settings of x0, x2 and rev, from ``configs/pilot/data.yaml`` (``x0_cut`` and ``views``).
+
+    Attributes:
+        fade: Seconds of fade at both ends of each part, in every view.
+        cutoff_hz: The -3 dB point of each pass of x2's low-pass, in Hz.
+        order: The order of each pass of x2's low-pass.
+        window: Samples per window of rev.
+        peak_limit: Highest peak of an x2 clip after its RMS is set.
+        rate: Sampling rate in Hz.
+        gap: Seconds of silence between two parts.
+    """
+
+    fade: float
+    cutoff_hz: float
+    order: int
+    window: int
+    peak_limit: float
+    rate: int = SAMPLING_RATE
+    gap: float = GAP_SECONDS
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> "ViewSettings":
+        """Read the settings from the whole data config.
+
+        Args:
+            config: The data config as loaded from YAML, with ``x0_cut`` and ``views``.
+
+        Returns:
+            The settings.
+
+        Raises:
+            ValueError: If the files are not 16-bit, the window is not a whole number of
+                samples, or a setting is out of range.
+        """
+        views = config["views"]
+        if views["flac_bits"] != 16:
+            raise ValueError(f"the views are stored as 16-bit FLAC, not {views['flac_bits']}-bit")
+        window_ms = views["rev"]["window_ms"]
+        window = round(window_ms * SAMPLING_RATE / 1000)
+        if window * 1000 != window_ms * SAMPLING_RATE or window < 1:
+            raise ValueError(f"rev's window of {window_ms} ms is not a whole number of samples")
+        settings = cls(
+            fade=config["x0_cut"]["fade_ms"] / 1000,
+            cutoff_hz=float(views["x2"]["cutoff_hz"]),
+            order=int(views["x2"]["butterworth_order"]),
+            window=window,
+            peak_limit=float(views["peak_limit"]),
+        )
+        if not 0.0 < settings.cutoff_hz < settings.rate / 2:
+            raise ValueError(f"x2's cutoff must lie between 0 and {settings.rate / 2} Hz")
+        if settings.order < 1:
+            raise ValueError(f"x2's filter order must be at least 1, got {settings.order}")
+        if not 0.0 < settings.peak_limit < 1.0:
+            raise ValueError(f"the peak limit must lie between 0 and 1, got {settings.peak_limit}")
+        if settings.fade < 0.0:
+            raise ValueError(f"the fade must not be negative, got {settings.fade}")
+        return settings
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentViews:
+    """The views of one segment, before they are stored.
+
+    Attributes:
+        x0: The original clip: the faded parts joined, float32, never rescaled.
+        x2: The muffled clip, float64, at the RMS of x0 (lower if its peak was limited).
+        rev: The reversed clip, float32.
+        part_starts: The first sample of each part, the same in every view.
+        part_ends: The sample just after each part, the same in every view.
+        x2_gain: The gain applied to x2 after the filter: the RMS gain times the peak factor.
+        x2_peak_limited: Whether x2 was scaled down to the peak limit.
+    """
+
+    x0: np.ndarray
+    x2: np.ndarray
+    rev: np.ndarray
+    part_starts: tuple[int, ...]
+    part_ends: tuple[int, ...]
+    x2_gain: float
+    x2_peak_limited: bool
+
+
+def build_segment_views(
+    audio: np.ndarray, windows: Sequence[Window], settings: ViewSettings
+) -> SegmentViews:
+    """Build x0, x2 and rev of one segment from its session recording.
+
+    - x0: each part is cut and faded, and the parts are joined with the gaps.
+    - x2: each faded part of x0 is low-passed (``muffle``) and faded again, the parts are
+      joined, the clip is set to the RMS of x0, and then scaled down to the peak limit if
+      its peak is above it.
+    - rev: each part, before its fades, is played backwards in windows
+      (``reverse_windows``) and then faded; the parts are joined.
+
+    Args:
+        audio: The whole session recording as floats in [-1, 1], mono, shape (samples,).
+        windows: The x0 window of each part in seconds, from ``stored_windows``.
+        settings: The view settings.
+
+    Returns:
+        The three views and where their parts are.
+
+    Raises:
+        ValueError: If the audio or windows are refused by ``cut_parts``, a part is too
+            short for x2's filter, or x0 is silent.
+    """
+    rate, fade, gap = settings.rate, settings.fade, settings.gap
+    raw = cut_parts(audio, windows, rate=rate)
+    faded = [fade_part(part, fade=fade, rate=rate) for part in raw]
+    x0, starts, ends = join_parts(faded, rate=rate, gap=gap)
+    muffled = [
+        fade_part(
+            muffle(part, cutoff_hz=settings.cutoff_hz, order=settings.order, rate=rate),
+            fade=fade,
+            rate=rate,
+        )
+        for part in faded
+    ]
+    x2_joined, x2_starts, _ = join_parts(muffled, rate=rate, gap=gap)
+    target = clip_rms(x0)
+    if target == 0.0:
+        raise ValueError("x0 is silent, so x2 has no RMS to match")
+    x2, rms_gain = set_rms(x2_joined, target)
+    x2, peak_factor, limited = limit_peak(x2, settings.peak_limit)
+    reversed_parts = [
+        fade_part(reverse_windows(part, window=settings.window), fade=fade, rate=rate)
+        for part in raw
+    ]
+    rev, rev_starts, _ = join_parts(reversed_parts, rate=rate, gap=gap)
+    if not (x2_starts == rev_starts == starts and len(x2) == len(rev) == len(x0)):
+        raise ValueError("the views of a segment differ in their parts")
+    return SegmentViews(
+        x0=x0,
+        x2=x2,
+        rev=rev,
+        part_starts=tuple(starts),
+        part_ends=tuple(ends),
+        x2_gain=rms_gain * peak_factor,
+        x2_peak_limited=limited,
+    )
+
+
+def check_segment_views(
+    views: Mapping[str, np.ndarray],
+    starts: Sequence[int],
+    ends: Sequence[int],
+    *,
+    gap: int,
+) -> None:
+    """Check that the views of one segment fit together, as they are stored.
+
+    Every view has the same length and the same parts; every gap sample is exactly 0;
+    and every part starts and ends at exactly 0.
+
+    Args:
+        views: Each view's clip by name, as floats or 16-bit numbers.
+        starts: The first sample of each part.
+        ends: The sample just after each part.
+        gap: Samples of silence between two parts.
+
+    Raises:
+        ValueError: If any of these does not hold.
+    """
+    lengths = {name: len(clip) for name, clip in views.items()}
+    if not lengths or len(set(lengths.values())) != 1:
+        raise ValueError(f"the views differ in length: {lengths}")
+    length = next(iter(lengths.values()))
+    if len(starts) == 0 or len(starts) != len(ends):
+        raise ValueError("expected one end per start and at least one part")
+    if starts[0] != 0 or ends[-1] != length:
+        raise ValueError("the parts do not span the clip")
+    for start, end in zip(starts, ends, strict=True):
+        if end - start < 2:
+            raise ValueError(f"a part from sample {start} to {end} is too short to fade")
+    for end, next_start in zip(ends[:-1], starts[1:], strict=True):
+        if next_start - end != gap:
+            raise ValueError(f"a gap of {next_start - end} samples, not {gap}")
+    for name, clip in views.items():
+        for end, next_start in zip(ends[:-1], starts[1:], strict=True):
+            if np.any(clip[end:next_start] != 0):
+                raise ValueError(f"{name}: a gap is not silent")
+        for start, end in zip(starts, ends, strict=True):
+            if clip[start] != 0 or clip[end - 1] != 0:
+                raise ValueError(f"{name}: a part does not start and end at 0")

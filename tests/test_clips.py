@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -6,17 +7,24 @@ import pandas as pd
 import pytest
 import soundfile as sf
 
+import listening_beyond_words.clips as clips
 from listening_beyond_words.clips import (
     LISTENING_PEAK,
     LISTENING_RMS,
+    MANIFEST_COLUMNS,
+    audio_sha256,
     format_windows,
     listening_copy,
     listening_gain,
+    listening_pcm16,
     load_segments,
     read_key,
+    read_session,
+    write_view,
 )
 from listening_beyond_words.runinfo import sha256_file
 from listening_beyond_words.settings import Workspace
+from listening_beyond_words.views import cut_original, to_pcm16
 
 RATE = 16_000
 CUT = {"guard_ms": 200, "offsets_s": {9001: 3.5}}  # session keys become strings in JSON
@@ -124,3 +132,132 @@ def test_listening_copy_is_the_float32_clip_times_its_gain(tmp_path: Path) -> No
     np.testing.assert_array_equal(copy, clip * np.float32(gain))
     sf.write(tmp_path / "01.wav", copy, RATE, subtype="PCM_16")
     assert sf.info(tmp_path / "01.wav").subtype == "PCM_16"
+
+
+def recording(root: Path, session: int, samples: np.ndarray, **options: object) -> Path:
+    """Write a synthetic recording where the session guard expects it (pilot ID, temp folder)."""
+    folder = root / "edaic" / "sessions" / f"{session}_P"
+    folder.mkdir(parents=True)
+    path = folder / f"{session}_AUDIO.wav"
+    sf.write(path, samples, **{"samplerate": RATE, "subtype": "PCM_16", **options})
+    return path
+
+
+def test_read_session_reads_16_bit_audio_as_n_over_32768(tmp_path: Path) -> None:
+    numbers = np.array([-32768, -1, 0, 1, 32767] * 100, dtype=np.int16)
+    recording(tmp_path, 300, numbers)
+    audio = read_session(tmp_path / "edaic" / "sessions", 300)
+    assert audio.dtype == np.float32
+    np.testing.assert_array_equal(audio, numbers / 32768)
+    np.testing.assert_array_equal(to_pcm16(audio), numbers)
+
+
+@pytest.mark.parametrize("session", [600, 718, 9001])
+def test_read_session_refuses_every_session_outside_the_pilot(tmp_path: Path, session: int) -> None:
+    with pytest.raises(ValueError, match="not a pilot session"):
+        read_session(tmp_path / "edaic" / "sessions", session)
+
+
+@pytest.mark.parametrize(
+    ("samples", "options", "message"),
+    [
+        (np.zeros((1000, 2), np.int16), {}, "2 channel(s)"),
+        (np.zeros(1000, np.int16), {"samplerate": 44_100}, "44100 Hz"),
+        (np.zeros(1000, np.int32), {"subtype": "PCM_24"}, "PCM_24"),
+    ],
+)
+def test_read_session_refuses_stereo_other_rates_and_other_bit_depths(
+    tmp_path: Path, samples: np.ndarray, options: dict, message: str
+) -> None:
+    recording(tmp_path, 300, samples, **options)
+    with pytest.raises(ValueError, match="expected 16000 Hz mono 16-bit PCM") as error:
+        read_session(tmp_path / "edaic" / "sessions", 300)
+    assert message in str(error.value)
+
+
+def test_write_view_stores_the_samples_exactly_and_returns_the_manifest_values(
+    tmp_path: Path,
+) -> None:
+    rng = np.random.default_rng(9001)
+    samples = rng.integers(-32768, 32768, 16_000).astype(np.int16)
+    samples[10] = -32768
+    values = write_view(tmp_path / "a.flac", samples)
+    back, rate = sf.read(tmp_path / "a.flac", dtype="int16")
+    assert rate == RATE
+    np.testing.assert_array_equal(back, samples)
+    assert sf.info(tmp_path / "a.flac").subtype == "PCM_16"
+    assert values["samples"] == 16_000
+    assert values["peak"] == 1.0
+    assert values["rms"] == pytest.approx(np.sqrt(np.mean((samples / 32768.0) ** 2)), rel=1e-12)
+    assert values["sha256"] == sha256_file(tmp_path / "a.flac")
+    assert values["audio_sha256"] == hashlib.sha256(samples.astype("<i2").tobytes()).hexdigest()
+    assert values["audio_sha256"] == audio_sha256(back)
+    assert set(values) < set(MANIFEST_COLUMNS)
+    # The same samples give the same file, byte for byte.
+    assert write_view(tmp_path / "b.flac", samples)["sha256"] == values["sha256"]
+
+
+def test_write_view_never_overwrites_a_file(tmp_path: Path) -> None:
+    samples = np.ones(100, np.int16)
+    write_view(tmp_path / "a.flac", samples)
+    with pytest.raises(ValueError, match="exists already"):
+        write_view(tmp_path / "a.flac", samples)
+
+
+def test_write_view_refuses_a_file_that_reads_back_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    read = sf.read
+
+    def changed(*args: object, **kwargs: object) -> tuple[np.ndarray, int]:
+        samples, rate = read(*args, **kwargs)
+        samples[5] += 1
+        return samples, rate
+
+    monkeypatch.setattr(clips.sf, "read", changed)
+    with pytest.raises(ValueError, match="does not read back as written"):
+        write_view(tmp_path / "a.flac", np.zeros(100, np.int16))
+
+
+def test_write_view_refuses_floats(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="int16"):
+        write_view(tmp_path / "a.flac", np.zeros(100, np.float32))
+
+
+def frozen_listening_copy(clip: np.ndarray) -> np.ndarray:
+    """The listening copy as scripts/listening_check.py made it at commit 2645d45."""
+    rms = float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
+    peak = float(np.max(np.abs(clip)))
+    gain = 1.0 if rms == 0.0 or peak == 0.0 else min(0.1 / rms, 0.99 / peak)
+    return clip * np.float32(gain)
+
+
+def listening_clips() -> list[np.ndarray]:
+    """A quiet clip, whose gain the RMS sets, and one whose gain the peak limits."""
+    rng = np.random.default_rng(9001)
+    audio = (np.rint(rng.normal(0, 0.03, 5 * RATE) * 32768) / 32768).astype(np.float32)
+    quiet = cut_original(audio, [(0.5, 2.0), (3.0, 4.5)], fade=0.01)
+    peaky = quiet.copy()
+    peaky[RATE] = 0.9
+    return [quiet, peaky]
+
+
+@pytest.mark.parametrize("which", [0, 1])
+def test_listening_copy_is_unchanged_from_the_listening_checks(which: int) -> None:
+    clip = listening_clips()[which]
+    copy, gain = listening_copy(clip)
+    np.testing.assert_array_equal(copy, frozen_listening_copy(clip))
+    assert np.float32(gain) * clip[RATE] == frozen_listening_copy(clip)[RATE]
+    if which == 1:
+        assert gain == 0.99 / float(np.float32(0.9))  # the peak limits the gain, as before
+
+
+@pytest.mark.parametrize("which", [0, 1])
+def test_listening_pcm16_recreates_a_listening_file_bit_for_bit(tmp_path: Path, which: int) -> None:
+    clip = listening_clips()[which]
+    # The heard file, written as scripts/listening_check.py wrote it at commit 2645d45:
+    sf.write(tmp_path / "01.wav", frozen_listening_copy(clip), RATE, subtype="PCM_16")
+    heard, _ = sf.read(tmp_path / "01.wav", dtype="int16")
+    np.testing.assert_array_equal(listening_pcm16(clip), heard)
+    # The WAV writer rounds down, so rounding to nearest would not match it.
+    assert not np.array_equal(to_pcm16(frozen_listening_copy(clip)), heard)

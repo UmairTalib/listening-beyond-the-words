@@ -6,21 +6,36 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from scipy.signal import butter, sosfiltfilt
 
 from listening_beyond_words.segments import build_segments, segment_neighbours
 from listening_beyond_words.views import (
+    ViewSettings,
+    build_segment_views,
+    check_segment_views,
+    clip_peak,
+    clip_rms,
     cut_original,
     cut_parts,
     fade_part,
     join_parts,
+    limit_peak,
+    muffle,
     part_windows,
+    reverse_whole,
+    reverse_windows,
     segment_windows,
+    set_rms,
+    stored_windows,
+    to_pcm16,
     windows_overlap,
 )
 
 RATE = 16_000
 MARGIN = 0.1  # the pilot's settings, configs/pilot/data.yaml
 FADE = 0.01
+CONFIG = Path(__file__).parents[1] / "configs" / "pilot" / "data.yaml"
+SETTINGS = ViewSettings(fade=FADE, cutoff_hz=400.0, order=8, window=4000, peak_limit=0.99)
 
 
 def noise(seconds: float) -> np.ndarray:
@@ -388,3 +403,321 @@ def test_join_parts_refuses_no_parts_and_mixed_types() -> None:
         join_parts([])
     with pytest.raises(ValueError, match="one type"):
         join_parts([np.ones(3, np.float32), np.ones(3, np.float64)])
+
+
+def speech_like(seconds: float, seed: int = 9001) -> np.ndarray:
+    """Synthetic recording around zero, as 16-bit audio read as floats (n / 32768)."""
+    rng = np.random.default_rng(seed)
+    samples = np.clip(np.rint(rng.normal(0.0, 0.05, round(seconds * RATE)) * 32768), -32768, 32767)
+    return (samples / 32768).astype(np.float32)
+
+
+def sine(frequency: float, seconds: float = 1.0) -> np.ndarray:
+    return np.sin(2 * np.pi * frequency * np.arange(round(seconds * RATE)) / RATE)
+
+
+def middle_gain_db(frequency: float) -> float:
+    """Gain of x2's filter on a 1 s sine, measured on its middle half, away from the edges."""
+    x = sine(frequency)
+    y = muffle(x, cutoff_hz=400, order=8)
+    middle = slice(len(x) // 4, 3 * len(x) // 4)
+    return float(20 * np.log10(clip_rms(y[middle]) / clip_rms(x[middle])))
+
+
+def test_x2_filter_removes_twice_the_cutoff() -> None:
+    assert middle_gain_db(800) <= -60.0  # expected -97.2 dB
+
+
+def test_x2_filter_is_6_db_down_at_the_cutoff() -> None:
+    assert middle_gain_db(400) == pytest.approx(-6.02, abs=0.05)
+
+
+def test_x2_filter_keeps_low_frequencies() -> None:
+    assert abs(middle_gain_db(100)) <= 0.1
+
+
+def test_x2_filter_shifts_nothing_in_time() -> None:
+    impulse = np.zeros(4001)
+    impulse[2000] = 1.0
+    response = muffle(impulse, cutoff_hz=400, order=8)
+    assert int(np.argmax(response)) == 2000
+    np.testing.assert_allclose(response, response[::-1], atol=1e-12)
+
+
+def test_x2_filter_keeps_the_length_works_in_float64_and_leaves_its_input() -> None:
+    part = speech_like(1.0)
+    copy = part.copy()
+    muffled = muffle(part, cutoff_hz=400, order=8)
+    assert muffled.dtype == np.float64
+    assert len(muffled) == len(part)
+    np.testing.assert_array_equal(part, copy)
+
+
+def test_x2_filter_refuses_a_part_shorter_than_its_padding() -> None:
+    with pytest.raises(ValueError, match="too short for the x2 filter"):
+        muffle(np.ones(27, np.float32), cutoff_hz=400, order=8)
+    assert len(muffle(np.ones(28, np.float32), cutoff_hz=400, order=8)) == 28
+    with pytest.raises(ValueError, match="floats"):
+        muffle(np.ones(100, np.int16), cutoff_hz=400, order=8)
+
+
+def test_x2_filter_pads_its_ends_as_scipy_does_by_default() -> None:
+    part = speech_like(0.125)  # 2,000 samples: the edges matter here
+    sos = butter(8, 400, fs=RATE, output="sos")
+    expected = sosfiltfilt(sos, part.astype(np.float64), padtype="odd", padlen=27)
+    np.testing.assert_array_equal(muffle(part, cutoff_hz=400, order=8), expected)
+    np.testing.assert_array_equal(expected, sosfiltfilt(sos, part.astype(np.float64)))
+
+
+def test_reverse_windows_restarts_at_each_part_and_reverses_a_short_last_window() -> None:
+    part = np.arange(10_000, dtype=np.float32)
+    reversed_part = reverse_windows(part, window=4000)
+    np.testing.assert_array_equal(reversed_part[:4000], np.arange(3999, -1, -1))
+    np.testing.assert_array_equal(reversed_part[4000:8000], np.arange(7999, 3999, -1))
+    np.testing.assert_array_equal(reversed_part[8000:], np.arange(9999, 7999, -1))
+    np.testing.assert_array_equal(reverse_windows(reversed_part, window=4000), part)
+    np.testing.assert_array_equal(reverse_windows(part[:100], window=4000), part[:100][::-1])
+    assert reversed_part.dtype == np.float32
+    with pytest.raises(ValueError, match="at least one sample"):
+        reverse_windows(part, window=0)
+
+
+def test_reverse_whole_plays_the_part_backwards() -> None:
+    part = np.arange(10, dtype=np.float32)
+    np.testing.assert_array_equal(reverse_whole(part), part[::-1])
+    np.testing.assert_array_equal(reverse_whole(reverse_whole(part)), part)
+    assert reverse_whole(part).flags.owndata
+
+
+WINDOWS = [(0.5, 1.8), (2.5, 2.52), (3.0, 4.2)]  # 20,800, 320 and 19,200 samples
+
+
+def test_views_share_their_length_and_parts() -> None:
+    views = build_segment_views(speech_like(5.0), WINDOWS, SETTINGS)
+    assert len(views.x0) == len(views.x2) == len(views.rev)
+    assert views.part_starts == (0, 25_600, 30_720)
+    assert views.part_ends == (20_800, 25_920, 49_920)
+    assert views.x0.dtype == np.float32
+    assert views.rev.dtype == np.float32
+    assert views.x2.dtype == np.float64
+    for clips in (
+        {"x0": views.x0, "x2": views.x2, "rev": views.rev},
+        {"x0": to_pcm16(views.x0), "x2": to_pcm16(views.x2), "rev": to_pcm16(views.rev)},
+    ):
+        check_segment_views(clips, views.part_starts, views.part_ends, gap=4800)
+
+
+def test_x0_of_the_views_is_the_original_clip() -> None:
+    audio = speech_like(5.0)
+    views = build_segment_views(audio, WINDOWS, SETTINGS)
+    np.testing.assert_array_equal(views.x0, cut_original(audio, WINDOWS, fade=FADE))
+
+
+def test_each_rev_part_is_its_raw_part_reversed_by_windows_then_faded() -> None:
+    audio = speech_like(5.0)
+    views = build_segment_views(audio, WINDOWS, SETTINGS)
+    n = round(FADE * RATE)
+    for raw, start, end in zip(
+        cut_parts(audio, WINDOWS), views.part_starts, views.part_ends, strict=True
+    ):
+        part = views.rev[start:end]
+        np.testing.assert_array_equal(part, fade_part(reverse_windows(raw, window=4000), fade=FADE))
+        if len(raw) > 2 * n:
+            np.testing.assert_array_equal(part[n:-n], reverse_windows(raw, window=4000)[n:-n])
+
+
+def test_x0s_fade_zone_appears_unfaded_in_rev() -> None:
+    audio = speech_like(5.0)
+    views = build_segment_views(audio, WINDOWS, SETTINGS)
+    raw = cut_parts(audio, WINDOWS)[0]  # 20,800 samples, at least 4,160
+    n = round(FADE * RATE)
+    rev = views.rev[: len(raw)]
+    np.testing.assert_array_equal(rev[3999 - np.arange(n)], raw[:n])
+    assert not np.array_equal(views.x0[1:n], raw[1:n])
+
+
+def test_each_x2_part_is_the_gain_times_the_faded_filtered_x0_part() -> None:
+    audio = speech_like(5.0)
+    views = build_segment_views(audio, WINDOWS, SETTINGS)
+    assert not views.x2_peak_limited
+    for start, end in zip(views.part_starts, views.part_ends, strict=True):
+        x0_part = views.x0[start:end]
+        expected = views.x2_gain * fade_part(muffle(x0_part, cutoff_hz=400, order=8), fade=FADE)
+        np.testing.assert_allclose(views.x2[start:end], expected, rtol=1e-12, atol=1e-15)
+        assert views.x2[start] == 0.0
+        assert views.x2[end - 1] == 0.0
+    assert clip_rms(views.x2) == pytest.approx(clip_rms(views.x0), rel=1e-12)
+
+
+def test_building_the_views_changes_no_input() -> None:
+    audio = speech_like(5.0)
+    copy = audio.copy()
+    windows = list(WINDOWS)
+    build_segment_views(audio, windows, SETTINGS)
+    np.testing.assert_array_equal(audio, copy)
+    assert windows == WINDOWS
+
+
+def test_a_loud_x2_clip_is_scaled_down_to_the_peak_limit_and_stays_below_its_rms() -> None:
+    # A loud 100 Hz square wave: the filter keeps a near-sine whose RMS-matched peak is ~1.3.
+    square = (0.9 * np.sign(sine(100, 3.0) + 1e-9)).astype(np.float32)
+    views = build_segment_views(square, [(0.5, 2.5)], SETTINGS)
+    assert views.x2_peak_limited
+    assert clip_peak(views.x2) == pytest.approx(0.99, abs=1e-12)
+    assert clip_rms(views.x2) < clip_rms(views.x0)
+    for start, end in zip(views.part_starts, views.part_ends, strict=True):
+        expected = views.x2_gain * fade_part(
+            muffle(views.x0[start:end], cutoff_hz=400, order=8), fade=FADE
+        )
+        np.testing.assert_allclose(views.x2[start:end], expected, rtol=1e-12, atol=1e-15)
+
+
+def test_a_silent_x0_stops_the_build_of_x2() -> None:
+    with pytest.raises(ValueError, match="x0 is silent"):
+        build_segment_views(np.zeros(5 * RATE, np.float32), WINDOWS, SETTINGS)
+
+
+def test_check_segment_views_catches_a_moved_part_bound() -> None:
+    views = build_segment_views(speech_like(5.0), WINDOWS, SETTINGS)
+    clips = {"x0": views.x0, "rev": views.rev}
+    moved = list(views.part_starts)
+    moved[1] += 1
+    with pytest.raises(ValueError, match="gap of 4801"):
+        check_segment_views(clips, moved, views.part_ends, gap=4800)
+    with pytest.raises(ValueError, match="do not span"):
+        check_segment_views(clips, views.part_starts, [*views.part_ends[:-1], 1], gap=4800)
+
+
+@pytest.mark.parametrize("view", ["x0", "x2", "rev"])
+@pytest.mark.parametrize("pcm16", [False, True])
+@pytest.mark.parametrize(
+    ("place", "message"),
+    [
+        (lambda starts, ends: starts[0], "a part does not start and end at 0"),
+        (lambda starts, ends: starts[1], "a part does not start and end at 0"),
+        (lambda starts, ends: ends[1] - 1, "a part does not start and end at 0"),
+        (lambda starts, ends: ends[2] - 1, "a part does not start and end at 0"),
+        (lambda starts, ends: ends[0], "a gap is not silent"),  # first gap sample
+        (lambda starts, ends: starts[1] - 1, "a gap is not silent"),  # last gap sample
+        (lambda starts, ends: ends[0] + 2400, "a gap is not silent"),
+    ],
+)
+def test_check_segment_views_catches_a_sample_planted_at_an_edge_or_in_a_gap(
+    view: str, pcm16: bool, place: object, message: str
+) -> None:
+    views = build_segment_views(speech_like(5.0), WINDOWS, SETTINGS)
+    clips = {"x0": views.x0, "x2": views.x2, "rev": views.rev}
+    if pcm16:
+        clips = {name: to_pcm16(clip) for name, clip in clips.items()}
+    clips[view] = clips[view].copy()
+    clips[view][place(views.part_starts, views.part_ends)] = 1 if pcm16 else 1e-6  # type: ignore[operator]
+    with pytest.raises(ValueError, match=f"{view}: {message}"):
+        check_segment_views(clips, views.part_starts, views.part_ends, gap=4800)
+
+
+def test_check_segment_views_catches_views_of_different_lengths() -> None:
+    views = build_segment_views(speech_like(5.0), WINDOWS, SETTINGS)
+    with pytest.raises(ValueError, match="differ in length"):
+        check_segment_views(
+            {"x0": views.x0, "rev": views.rev[:-1]}, views.part_starts, views.part_ends, gap=4800
+        )
+
+
+def test_set_rms_reaches_the_target_and_refuses_silence_and_nan() -> None:
+    clip = speech_like(1.0)
+    scaled, gain = set_rms(clip, 0.05)
+    assert scaled.dtype == np.float64
+    assert clip_rms(scaled) == pytest.approx(0.05, rel=1e-12)
+    assert gain == pytest.approx(0.05 / clip_rms(clip))
+    with pytest.raises(ValueError, match="silent"):
+        set_rms(np.zeros(100), 0.05)
+    with pytest.raises(ValueError, match="NaN"):
+        set_rms(np.array([0.1, np.nan]), 0.05)
+    with pytest.raises(ValueError, match="positive"):
+        set_rms(clip, 0.0)
+
+
+def test_the_peak_guard_acts_only_above_its_limit() -> None:
+    clip = np.array([0.0, 0.99, -0.5])
+    same, factor, limited = limit_peak(clip, 0.99)
+    assert same is clip
+    assert (factor, limited) == (1.0, False)
+    loud = np.array([0.0, -1.2, 0.6])
+    scaled, factor, limited = limit_peak(loud, 0.99)
+    assert limited
+    assert factor == pytest.approx(0.99 / 1.2)
+    assert clip_peak(scaled) == pytest.approx(0.99)
+    with pytest.raises(ValueError, match="NaN"):
+        limit_peak(np.array([np.nan]), 0.99)
+
+
+def test_levels_are_measured_in_float64_over_the_whole_clip() -> None:
+    samples = np.array([-32768, 0, 0, 16384], dtype=np.int16)
+    values = samples.astype(np.float64) / 32768
+    assert clip_peak(values) == 1.0
+    assert clip_rms(values) == pytest.approx(np.sqrt((1 + 0.25) / 4))
+    assert clip_rms(np.full(4, 0.5, np.float32)) == 0.5
+    with pytest.raises(ValueError, match="empty"):
+        clip_rms(np.zeros(0))
+    with pytest.raises(ValueError, match="empty"):
+        clip_peak(np.zeros(0))
+
+
+def test_to_pcm16_gives_back_the_numbers_of_a_16_bit_recording() -> None:
+    numbers = np.array([-32768, -1, 0, 1, 32767, 12345], dtype=np.int16)
+    np.testing.assert_array_equal(to_pcm16((numbers / 32768).astype(np.float32)), numbers)
+    halves = np.array([0.5, 1.5, -0.5, 2.5]) / 32768
+    np.testing.assert_array_equal(to_pcm16(halves), [0, 2, 0, 2])  # halfway: to even
+
+
+@pytest.mark.parametrize(
+    ("clip", "message"),
+    [
+        (np.array([0.1, np.nan]), "NaN"),
+        (np.array([np.inf]), "NaN"),
+        (np.array([1.0]), "outside the 16-bit range"),
+        (np.array([-1.0001]), "outside the 16-bit range"),
+        (np.array([1], dtype=np.int16), "floats"),
+    ],
+)
+def test_to_pcm16_refuses_instead_of_clipping(clip: np.ndarray, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        to_pcm16(clip)
+
+
+def test_stored_windows_reads_the_windows_of_a_segment_row() -> None:
+    row = SimpleNamespace(window_starts=np.array([1.0, 3.0]), window_ends=np.array([2.0, 4.5]))
+    assert stored_windows(row) == [(1.0, 2.0), (3.0, 4.5)]
+    assert all(type(value) is float for window in stored_windows(row) for value in window)
+
+
+def test_view_settings_come_from_the_data_config() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert ViewSettings.from_config(config) == SETTINGS
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"flac_bits": 24}, "16-bit"),
+        ({"rev": {"window_ms": 250.03}}, "whole number of samples"),
+        ({"peak_limit": 1.2}, "peak limit"),
+        ({"x2": {"cutoff_hz": 9000, "butterworth_order": 8}}, "cutoff"),
+    ],
+)
+def test_view_settings_refuse_other_files_and_impossible_values(change: dict, message: str) -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    config["views"] = {**config["views"], **change}
+    with pytest.raises(ValueError, match=message):
+        ViewSettings.from_config(config)
+
+
+def test_data_config_pins_the_view_and_sample_settings() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert config["views"] == {
+        "peak_limit": 0.99,
+        "flac_bits": 16,
+        "x2": {"cutoff_hz": 400, "butterworth_order": 8},
+        "rev": {"window_ms": 250},
+    }
+    assert config["word_check"]["sample"] == {"seed": 105, "segments_per_participant": 5}

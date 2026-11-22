@@ -3,9 +3,17 @@
 import hashlib
 import json
 import numbers
+import platform
 import subprocess
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+LOCK_FILE = Path("uv.lock")
 
 
 def utc_now() -> str:
@@ -92,11 +100,59 @@ def check_sha256(path: Path, expected: str) -> None:
         )
 
 
+def environment(packages: Sequence[str]) -> dict[str, object]:
+    """Return the Python version, package versions, CPU and lock file of this process.
+
+    Args:
+        packages: Names of the installed packages whose versions to record.
+
+    Returns:
+        ``python``, ``packages`` (None for a package that is not installed), ``cpu`` (the
+        CPU model where Linux names it) and ``uv_lock_sha256`` (of ``uv.lock`` in the
+        current folder, the clone's root in every step; None if it is missing).
+    """
+    versions: dict[str, str | None] = {}
+    for name in packages:
+        try:
+            versions[name] = version(name)
+        except PackageNotFoundError:
+            versions[name] = None
+    cpu = platform.processor() or None
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.is_file():
+        for line in cpuinfo.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("model name"):
+                cpu = line.split(":", 1)[1].strip()
+                break
+    return {
+        "python": platform.python_version(),
+        "packages": versions,
+        "cpu": cpu,
+        "uv_lock_sha256": sha256_file(LOCK_FILE) if LOCK_FILE.is_file() else None,
+    }
+
+
+def _plain(value: Any) -> Any:
+    """Turn the NumPy numbers and arrays that JSON cannot write into Python values."""
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    raise TypeError(f"cannot write {type(value).__name__} as JSON")
+
+
 def write_json(path: Path, data: dict[str, object]) -> None:
     """Write a dictionary as indented JSON.
+
+    NumPy numbers and arrays are written as plain numbers and lists, so that a count such
+    as a NumPy sum never stops a step at its end.
 
     Args:
         path: The output file.
         data: What to write.
     """
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(data, indent=2, default=_plain) + "\n", encoding="utf-8")
