@@ -36,7 +36,7 @@ x0_cut: # how a segment's original clip is cut from the recording (src/listening
 views: # docs/pilot_protocol.md, section "Clip versions"; fixed on 2026-11-20, before any view is built
   peak_limit: 0.99 # after its RMS is set, an x1 or x2 clip whose peak is above this is scaled down to it as a whole; such clips are counted
   flac_bits: 16 # every view is stored as 16-bit FLAC, with a manifest: each file's length, RMS, peak and SHA-256, and each part's start and end sample
-  x2: # muffled: each part of x0 is filtered on its own, then the clip's RMS is set to x0's
+  x2: # muffled: each part of x0 is filtered on its own and gets x0's fades again (x0_cut.fade_ms; added 2026-11-22), then the clip's RMS is set to x0's
     cutoff_hz: 400 # low-pass, the -3 dB point of each pass (pilot protocol, fixed settings "Views")
     butterworth_order: 8 # of each pass; run forwards and backwards, so that nothing shifts in time (6 dB down at cutoff_hz in all)
   rev: # reversed: each part's audio before its fades, played backwards window by window, then x0's fades (x0_cut.fade_ms)
