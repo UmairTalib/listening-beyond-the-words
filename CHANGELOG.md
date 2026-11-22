@@ -47,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The clip versions `x0`, `x2` and `rev` of all 5,883 segments (built on 2026-11-22, job 12557091) and the word-check sample of 943 segments, pinned in `configs/pilot/data.yaml` (`view_runs` and `wordcheck_sample`) by the SHA-256 of their manifest and sample files, with the result in the pilot protocol (section "Clip versions").
 - `segments.segment_parts`: the words of each part of every segment, named by their transcript line and the indices of the part's first and last word, from the words table of a segments run, which holds no text. It shares its code with `build_segments`, whose output is unchanged, bit for bit, and it refuses a part whose words are not one unbroken run of one line.
 - Slurm rules: `submit.sh` submits every job with `--no-requeue`, so that a job that Slurm requeues after a node failure never meets its own half-written output, and `common.sh` turns off core dumps. Array jobs run at most 10 GPU tasks or 20 CPU tasks at once, and the conventions give the time limits of `short` (6 h) and of `gpu` and `medium` (1 day).
+- The conventions allow the clips of a listening check to be copied to the Mac, only to be heard, as the earlier listening checks and the planned check of the re-voiced clip need; all other data stays on OMNI.
 
 ### Changed
 

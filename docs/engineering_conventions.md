@@ -187,7 +187,7 @@ configs/pilot/zeroshot.yaml   scoring only
 ## 6. Paths and the workspace
 
 - No absolute paths in code or configs. `settings.get_workspace()` reads the workspace root from `LBW_WORKSPACE` and names the standard folders.
-- On OMNI the root is `$(ws_find cpg-thesis)`. The Mac never holds data, and the tests point `LBW_WORKSPACE` at a temporary folder.
+- On OMNI the root is `$(ws_find cpg-thesis)`. The Mac holds no data, except the clips of a listening check, copied there only to be heard. The tests point `LBW_WORKSPACE` at a temporary folder.
 
 ```text
 $LBW_WORKSPACE/
@@ -218,7 +218,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - `reports/` holds aggregate numbers only: per-fold AUROC, means, intervals and figures. Report writers refuse columns that identify a person or a segment (`pid`, `segment_id`).
 - Sessions 600–718 are never opened or used before the external test. The download script fetches them and records their sizes and checksums; on OMNI they stay packed and locked (no read permission). Apart from the download and unpack scripts, all code that opens a session's files (recording and transcript) goes through `sessions.py`. Its `session_files` gives a session's paths only for the 189 pilot IDs (300–492 without 342, 394, 398 and 460) and raises an error for any other ID; `clips.read_session` reads a recording through it. The label files also hold rows of other sessions: `labels.py` reads them and keeps only the pilot IDs (`sessions.PILOT_IDS`) right after reading.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
-- Data never leaves OMNI: no copies to the Mac, no external services, no hosted notebooks, no online trackers.
+- Data never leaves OMNI, except the clips of a listening check, copied to the Mac only to be heard. It never goes to external services, hosted notebooks or online trackers.
 - Files are private: scripts and jobs set `umask 077`.
 - The download links are passed to `scripts/download_edaic.sh` and `scripts/download_daicwoz.sh` as arguments when they run. They never appear in a file in git.
 - Code never deletes anything on OMNI. Each run writes a new folder. Clean-ups are manual: list what would go first, then delete.
