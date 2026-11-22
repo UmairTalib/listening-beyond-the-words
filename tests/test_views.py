@@ -10,6 +10,9 @@ import yaml
 from listening_beyond_words.segments import build_segments, segment_neighbours
 from listening_beyond_words.views import (
     cut_original,
+    cut_parts,
+    fade_part,
+    join_parts,
     part_windows,
     segment_windows,
     windows_overlap,
@@ -277,3 +280,111 @@ def test_a_bound_keeps_the_window_inside_the_participants_turn() -> None:
         part_windows([1.0], [2.0], 10.0, margin=MARGIN, bounds=[(1.1, 3.0)])
     with pytest.raises(ValueError, match="one bound per part"):
         part_windows([1.0], [2.0], 10.0, margin=MARGIN, bounds=[])
+
+
+def frozen_cut_original(
+    audio: np.ndarray, windows: list[tuple[float, float]], *, fade: float, rate: int = RATE
+) -> np.ndarray:
+    """``cut_original`` as it was when the listening checks were cut (commit 2645d45)."""
+    silence = np.zeros(round(0.3 * rate), dtype=np.float32)
+    pieces: list[np.ndarray] = []
+    for low, high in windows:
+        piece = np.array(audio[round(low * rate) : round(high * rate)], dtype=np.float32)
+        n = min(round(fade * rate), len(piece) // 2)
+        if n > 0:
+            ramp = (0.5 - 0.5 * np.cos(np.pi * np.arange(n) / n)).astype(np.float32)
+            piece[:n] *= ramp
+            piece[-n:] *= ramp[::-1]
+        if pieces:
+            pieces.append(silence)
+        pieces.append(piece)
+    return np.concatenate(pieces)
+
+
+@pytest.mark.parametrize(
+    ("windows", "fade", "float64"),
+    [
+        ([(0.9, 2.1), (4.9, 6.1), (7.0, 7.3)], FADE, False),
+        ([(0.9, 2.1), (4.9, 6.1)], FADE, True),  # a float64 recording is cut as float32
+        ([(0.9, 2.1), (4.9, 6.1)], 0.0, False),  # no fade
+        ([(1.0, 1.0 + 1 / RATE), (2.0, 3.0)], FADE, False),  # a part of 1 sample
+        ([(1.0, 1.0 + 3 / RATE)], FADE, False),  # a part shorter than two fades
+        ([(1.0, 1.0 + 7 / RATE), (2.0, 2.0 + 320 / RATE)], FADE, False),
+    ],
+)
+def test_cut_original_is_unchanged_bit_for_bit(
+    windows: list[tuple[float, float]], fade: float, float64: bool
+) -> None:
+    audio = noise(10.0)
+    if float64:
+        audio = audio.astype(np.float64) + 1e-9
+    expected = frozen_cut_original(audio, windows, fade=fade)
+    clip = cut_original(audio, windows, fade=fade)
+    assert clip.dtype == expected.dtype == np.float32
+    np.testing.assert_array_equal(clip, expected)
+
+
+def test_cut_parts_copies_each_window_before_any_fade() -> None:
+    audio = noise(10.0)
+    parts = cut_parts(audio, [(0.9, 2.1), (4.9, 6.1)])
+    assert [part.dtype for part in parts] == [np.float32, np.float32]
+    np.testing.assert_array_equal(parts[0], audio[round(0.9 * RATE) : round(2.1 * RATE)])
+    np.testing.assert_array_equal(parts[1], audio[round(4.9 * RATE) : round(6.1 * RATE)])
+    parts[0][:] = 0.0
+    assert np.all(audio[round(0.9 * RATE) : round(2.1 * RATE)] > 0.0)
+
+
+@pytest.mark.parametrize(
+    ("audio", "windows", "message"),
+    [
+        (np.zeros((100, 2), dtype=np.float32), [(0.0, 0.001)], "mono"),
+        (np.zeros(1000, dtype=np.int16), [(0.0, 0.01)], "floats"),
+        (np.zeros(1000, dtype=np.float32), [], "at least one part"),
+    ],
+)
+def test_cut_parts_keeps_the_three_errors_of_the_cut(
+    audio: np.ndarray, windows: list[tuple[float, float]], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        cut_parts(audio, windows)
+
+
+def test_fade_part_returns_a_faded_copy_in_the_parts_own_type() -> None:
+    part = noise(1.0).astype(np.float64)
+    faded = fade_part(part, fade=FADE)
+    n = round(FADE * RATE)
+    assert faded.dtype == np.float64
+    assert faded[0] == 0.0
+    assert faded[-1] == 0.0
+    np.testing.assert_array_equal(faded[n:-n], part[n:-n])
+    assert not np.array_equal(faded[:n], part[:n])
+    assert np.all(part > 0.0)  # the input is not changed
+    ramp = 0.5 - 0.5 * np.cos(np.pi * np.arange(n) / n)
+    np.testing.assert_array_equal(faded[:n], part[:n] * ramp)
+
+
+def test_fade_part_refuses_integers_and_two_dimensions() -> None:
+    with pytest.raises(ValueError, match="floats"):
+        fade_part(np.ones(100, dtype=np.int16), fade=FADE)
+    with pytest.raises(ValueError, match="floats"):
+        fade_part(np.ones((100, 2), dtype=np.float32), fade=FADE)
+
+
+def test_join_parts_puts_exactly_4800_zeros_between_parts_and_returns_their_bounds() -> None:
+    parts = [np.ones(10, np.float32), np.full(5, 2.0, np.float32), np.full(7, 3.0, np.float32)]
+    clip, starts, ends = join_parts(parts)
+    assert clip.dtype == np.float32
+    assert starts == [0, 4810, 9615]
+    assert ends == [10, 4815, 9622]
+    assert len(clip) == 9622
+    for part, start, end in zip(parts, starts, ends, strict=True):
+        np.testing.assert_array_equal(clip[start:end], part)
+    assert np.all(clip[10:4810] == 0.0)
+    assert np.all(clip[4815:9615] == 0.0)
+
+
+def test_join_parts_refuses_no_parts_and_mixed_types() -> None:
+    with pytest.raises(ValueError, match="at least one part"):
+        join_parts([])
+    with pytest.raises(ValueError, match="one type"):
+        join_parts([np.ones(3, np.float32), np.ones(3, np.float64)])

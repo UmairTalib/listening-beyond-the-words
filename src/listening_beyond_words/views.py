@@ -185,6 +185,105 @@ def windows_overlap(first: Sequence[Window], second: Sequence[Window]) -> bool:
     )
 
 
+def cut_parts(
+    audio: np.ndarray, windows: Sequence[Window], *, rate: int = SAMPLING_RATE
+) -> list[np.ndarray]:
+    """Cut the audio of each part of one segment from its session recording, before any fade.
+
+    Args:
+        audio: The whole session recording as floats in [-1, 1], mono, shape (samples,).
+        windows: The window of each part in seconds, from ``part_windows``.
+        rate: Sampling rate of ``audio`` in Hz.
+
+    Returns:
+        A float32 copy of each part's window, in the order of ``windows``. The recording
+        itself is not changed.
+
+    Raises:
+        ValueError: If ``audio`` is not mono or not floating point, or there are no windows.
+    """
+    if audio.ndim != 1:
+        raise ValueError(f"expected mono audio of shape (samples,), got shape {audio.shape}")
+    if not np.issubdtype(audio.dtype, np.floating):
+        raise ValueError(f"expected audio as floats in [-1, 1], got {audio.dtype}")
+    if len(windows) == 0:
+        raise ValueError("a clip needs at least one part")
+    return [
+        np.array(audio[round(low * rate) : round(high * rate)], dtype=np.float32)
+        for low, high in windows
+    ]
+
+
+def fade_part(part: np.ndarray, *, fade: float, rate: int = SAMPLING_RATE) -> np.ndarray:
+    """Return a copy of one part with x0's raised-cosine fades at both ends.
+
+    The fade lasts ``fade`` seconds, or half the part if the part is shorter. The ramp
+    starts at 0, so a part of two samples or more starts and ends at exactly 0. It is
+    computed in the part's own float type: float32 parts are faded exactly as x0 always was.
+
+    Args:
+        part: One part as floats, shape (samples,).
+        fade: Seconds of fade-in at the start and fade-out at the end.
+        rate: Sampling rate in Hz.
+
+    Returns:
+        The faded copy, in the type of ``part``. ``part`` itself is not changed.
+
+    Raises:
+        ValueError: If ``part`` is not one-dimensional floats.
+    """
+    if part.ndim != 1 or not np.issubdtype(part.dtype, np.floating):
+        raise ValueError(
+            f"expected a part as floats of shape (samples,), got {part.dtype} {part.shape}"
+        )
+    piece = part.copy()
+    n = min(round(fade * rate), len(piece) // 2)
+    if n > 0:
+        # Raised-cosine ramp from 0, so each part starts and ends at exactly 0.
+        ramp = (0.5 - 0.5 * np.cos(np.pi * np.arange(n) / n)).astype(piece.dtype)
+        piece[:n] *= ramp
+        piece[-n:] *= ramp[::-1]
+    return piece
+
+
+def join_parts(
+    parts: Sequence[np.ndarray], *, rate: int = SAMPLING_RATE, gap: float = GAP_SECONDS
+) -> tuple[np.ndarray, list[int], list[int]]:
+    """Join the parts of one clip with silence between them.
+
+    Args:
+        parts: The parts in clip order, all of one float type, each of shape (samples,).
+        rate: Sampling rate in Hz.
+        gap: Seconds of silence between two parts: exactly ``round(gap * rate)`` zeros.
+
+    Returns:
+        The clip, in the parts' type; the first sample of each part in the clip; and the
+        sample just after each part, so that ``clip[start:end]`` is the part.
+
+    Raises:
+        ValueError: If there are no parts or the parts differ in type.
+    """
+    if len(parts) == 0:
+        raise ValueError("a clip needs at least one part")
+    kinds = {part.dtype for part in parts}
+    if len(kinds) != 1:
+        raise ValueError(f"the parts of a clip must share one type, got {sorted(map(str, kinds))}")
+    silence = np.zeros(round(gap * rate), dtype=parts[0].dtype)
+    pieces: list[np.ndarray] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    position = 0
+    for part in parts:
+        if pieces:
+            pieces.append(silence)
+            position += len(silence)
+        starts.append(position)
+        pieces.append(part)
+        position += len(part)
+        ends.append(position)
+    return np.concatenate(pieces), starts, ends
+
+
 def cut_original(
     audio: np.ndarray,
     windows: Sequence[Window],
@@ -194,6 +293,9 @@ def cut_original(
     gap: float = GAP_SECONDS,
 ) -> np.ndarray:
     """Cut the original clip (x0) of one segment from its session recording.
+
+    Each part is cut (``cut_parts``), faded (``fade_part``) and joined to the next by
+    the gap (``join_parts``).
 
     Args:
         audio: The whole session recording as floats in [-1, 1], mono, shape (samples,).
@@ -208,23 +310,8 @@ def cut_original(
     Raises:
         ValueError: If ``audio`` is not mono or not floating point, or there are no windows.
     """
-    if audio.ndim != 1:
-        raise ValueError(f"expected mono audio of shape (samples,), got shape {audio.shape}")
-    if not np.issubdtype(audio.dtype, np.floating):
-        raise ValueError(f"expected audio as floats in [-1, 1], got {audio.dtype}")
-    if len(windows) == 0:
-        raise ValueError("a clip needs at least one part")
-    silence = np.zeros(round(gap * rate), dtype=np.float32)
-    pieces: list[np.ndarray] = []
-    for low, high in windows:
-        piece = np.array(audio[round(low * rate) : round(high * rate)], dtype=np.float32)
-        n = min(round(fade * rate), len(piece) // 2)
-        if n > 0:
-            # Raised-cosine ramp from 0, so each part starts and ends at exactly 0.
-            ramp = (0.5 - 0.5 * np.cos(np.pi * np.arange(n) / n)).astype(np.float32)
-            piece[:n] *= ramp
-            piece[-n:] *= ramp[::-1]
-        if pieces:
-            pieces.append(silence)
-        pieces.append(piece)
-    return np.concatenate(pieces)
+    parts = cut_parts(audio, windows, rate=rate)
+    clip, _, _ = join_parts(
+        [fade_part(part, fade=fade, rate=rate) for part in parts], rate=rate, gap=gap
+    )
+    return clip

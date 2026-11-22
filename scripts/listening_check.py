@@ -22,7 +22,6 @@ are checked with seed 104. The script takes seed 104 exactly when the pinned seg
 were built with the widened guard.
 """
 
-import json
 import os
 from pathlib import Path
 
@@ -31,13 +30,15 @@ import pandas as pd
 import soundfile as sf
 import yaml
 
-from listening_beyond_words.runinfo import (
-    check_sha256,
-    git_state,
-    utc_now,
-    utc_stamp,
-    write_json,
+from listening_beyond_words.clips import (
+    LISTENING_PEAK,
+    LISTENING_RMS,
+    format_windows,
+    listening_copy,
+    load_segments,
+    read_key,
 )
+from listening_beyond_words.runinfo import git_state, utc_now, utc_stamp, write_json
 from listening_beyond_words.segments import GAP_SECONDS
 from listening_beyond_words.sessions import session_files
 from listening_beyond_words.settings import Workspace, get_workspace
@@ -45,39 +46,15 @@ from listening_beyond_words.views import SAMPLING_RATE, Window, cut_original, wi
 
 CONFIG = Path("configs/pilot/data.yaml")
 CLIPS = 20
-LISTENING_RMS = 0.1  # common loudness of the listening copies (-20 dBFS) ...
-LISTENING_PEAK = 0.99  # ... unless that would clip; x0 itself keeps the recording's level
-
-
-def load_segments(workspace: Workspace, config: dict) -> pd.DataFrame:
-    """The pinned segments, after checking that they come from the pinned inputs and settings."""
-    pin = config["segments"]
-    path = workspace.resolve(pin["run"]) / "segments.parquet"
-    check_sha256(path, pin["sha256"])
-    built = json.loads((path.parent / "run.json").read_text(encoding="utf-8"))
-    for name in ("word_times", "participant_lines"):
-        if built["inputs"][name]["sha256"] != config[name]["sha256"]:
-            raise ValueError(f"the pinned segments were not built from the pinned {name}")
-    for name in ("daicwoz_cut", "x0_cut"):
-        # run.json is JSON, where the session keys of the settings became strings.
-        if built["settings"][name] != json.loads(json.dumps(config[name])):
-            raise ValueError(f"the pinned segments were built with other {name} settings")
-    return pd.read_parquet(path).sort_values("segment", ignore_index=True)
 
 
 def heard_windows(workspace: Workspace, checks: list[dict]) -> dict[int, list[Window]]:
     """The audio windows of every clip of the earlier checks, by session."""
     heard: dict[int, list[Window]] = {}
     for check in checks:
-        key = workspace.resolve(check["run"]) / "key.tsv"
-        check_sha256(key, check["sha256"])
-        for segment, windows in pd.read_csv(key, sep="\t")[["segment", "windows"]].itertuples(
-            index=False
-        ):
-            session = int(str(segment).split("_")[0])
-            for window in str(windows).split(";"):
-                low, high = (float(t) for t in window.strip().split("-"))
-                heard.setdefault(session, []).append((low, high))
+        key = read_key(workspace.resolve(check["run"]) / "key.tsv", check["sha256"])
+        for session, windows in zip(key["session"], key["windows"], strict=True):
+            heard.setdefault(int(session), []).extend(windows)
     return heard
 
 
@@ -88,15 +65,6 @@ def margins(windows: list[Window], starts: list[float], ends: list[float]) -> li
         for (low, high), start, end in zip(windows, starts, ends, strict=True)
         for side in (start - low, high - end)
     ]
-
-
-def listening_gain(clip: np.ndarray) -> float:
-    """Gain that brings a clip to the common listening loudness without clipping."""
-    rms = float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
-    peak = float(np.max(np.abs(clip)))
-    if rms == 0.0 or peak == 0.0:
-        return 1.0
-    return min(LISTENING_RMS / rms, LISTENING_PEAK / peak)
 
 
 def main() -> None:
@@ -165,9 +133,9 @@ def main() -> None:
                 )
             windows = windows_of[index]
             clip = cut_original(audio, windows, fade=fade, rate=rate)
-            gain = listening_gain(clip)
+            copy, gain = listening_copy(clip)
             name = f"{number:02d}.wav"
-            sf.write(clips_dir / name, clip * np.float32(gain), rate, subtype="PCM_16")
+            sf.write(clips_dir / name, copy, rate, subtype="PCM_16")
             kept += margins(windows, list(row["starts"]), list(row["ends"]))
             rows.append(
                 {
@@ -176,7 +144,7 @@ def main() -> None:
                     "parts": len(windows),
                     "seconds": round(len(clip) / rate, 2),
                     "gain_db": round(20 * np.log10(gain), 1),
-                    "windows": "; ".join(f"{low:.4f}-{high:.4f}" for low, high in windows),
+                    "windows": format_windows(windows),
                 }
             )
         key = pd.DataFrame(rows)
