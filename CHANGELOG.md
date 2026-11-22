@@ -40,6 +40,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - espeak-ng 1.52.0 built from source into the OMNI workspace by `scripts/build_espeak_ng.sh`, which `scripts/setup_omni_env.sh` runs: the same commit and build options as the library bundled with espeakng-loader 0.2.4, but compiled with the system compilers and as position-independent code, because that library needs glibc 2.29 and OMNI has 2.28. Kokoro's text front end uses this build for words outside its lexicon (`listening_beyond_words.espeak`); without it such words would get no sound.
 - Glossary rows for the four clip versions, eGeMAPS, ICC, leakage AUROC and the word check.
 - The cut of `x0` in three steps that the other clip versions reuse: cut each part's window, fade it, and join the parts with the 300 ms gaps, returning where each part starts and ends. Its output is unchanged, bit for bit. The segment loader, the listening level and the reader of a listening check's key move from `scripts/listening_check.py` into `clips.py`, so that the clip-building scripts share them.
+- `runinfo.item_seed`: the seed of one item, such as a part of a re-voiced clip, derived from the run seed and the item's keys with SHA-256, so that it is the same in every process and on every machine.
 
 ### Changed
 
