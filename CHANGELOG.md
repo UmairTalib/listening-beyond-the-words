@@ -45,6 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Word-check sample (`wordcheck.draw_sample` and `scripts/draw_wordcheck_sample.py`, run on an OMNI login node from a clean checkout): five segments per participant drawn with seed 105 without replacement, or all of a participant's segments if there are fewer, with participants and segments taken in ascending ID so that the draw depends only on the seed. It is written with its SHA-256 for pinning, before any clip is transcribed.
 - The engineering conventions describe the repository layout as it is: flat modules in the package, one script per pipeline step in `scripts/`, a job file of the same name for GPU and long CPU steps, and output folders named after what they hold. The session guard is `sessions.py`.
 - The clip versions `x0`, `x2` and `rev` of all 5,883 segments (built on 2026-11-22, job 12557091) and the word-check sample of 943 segments, pinned in `configs/pilot/data.yaml` (`view_runs` and `wordcheck_sample`) by the SHA-256 of their manifest and sample files, with the result in the pilot protocol (section "Clip versions").
+- `segments.segment_parts`: the words of each part of every segment, named by their transcript line and the indices of the part's first and last word, from the words table of a segments run, which holds no text. It shares its code with `build_segments`, whose output is unchanged, bit for bit, and it refuses a part whose words are not one unbroken run of one line.
 
 ### Changed
 

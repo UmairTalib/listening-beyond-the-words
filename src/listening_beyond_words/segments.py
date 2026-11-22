@@ -6,11 +6,12 @@ audio is kept, pauses included; between parts the audio is replaced by a fixed
 gap. A part is a run of kept words from one transcript line with no dropped word
 and no interviewer turn between them (``cut.py``, column ``part``); words without
 a part column are split into parts by line. Words left over at the end of a
-session (fewer than 40) are not used.
+session (fewer than 40) are not used. ``segment_parts`` names the words of each part
+by line and word index, without their text, for the re-voiced clip.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Final, cast
 
 import numpy as np
@@ -36,6 +37,38 @@ def _kept(group: pd.DataFrame) -> np.ndarray:
     return np.ones(len(group), dtype=bool)
 
 
+def _segment_chunks(
+    words: pd.DataFrame, n_words: int
+) -> Iterator[tuple[int, int, pd.DataFrame, pd.DataFrame, str]]:
+    """Yield every segment's kept words and its parts, without reading any word's text.
+
+    Args:
+        words: One row per aligned word, as for ``build_segments``.
+        n_words: Words per segment.
+
+    Yields:
+        The session, the segment's index in it, its words in segment order, its parts
+        (indexed by part key, with ``start`` and ``end``, in time order) and the column
+        that holds the part keys (``part``, or ``line`` where there is none).
+
+    Raises:
+        ValueError: If the words have a ``kept`` column but no ``part`` column, which
+            would join the words on both sides of a dropped word into one part.
+    """
+    if "kept" in words.columns and "part" not in words.columns:
+        raise ValueError("words with a kept column need their part keys (cut.cut_words)")
+    ordered = in_segment_order(words)
+    ordered = ordered[_kept(ordered)]
+    key = "part" if "part" in ordered.columns else "line"
+    for session_key, group in ordered.groupby("session", sort=True):
+        session = int(cast(int, session_key))
+        usable = len(group) - len(group) % n_words
+        for index, first in enumerate(range(0, usable, n_words)):
+            chunk = group.iloc[first : first + n_words]
+            parts = chunk.groupby(key, sort=False).agg(start=("start", "min"), end=("end", "max"))
+            yield session, index, chunk, parts.sort_values("start"), key
+
+
 def build_segments(
     words: pd.DataFrame, n_words: int = SEGMENT_WORDS, gap: float = GAP_SECONDS
 ) -> pd.DataFrame:
@@ -58,33 +91,97 @@ def build_segments(
         ValueError: If the words have a ``kept`` column but no ``part`` column, which
             would join the words on both sides of a dropped word into one part.
     """
-    if "kept" in words.columns and "part" not in words.columns:
-        raise ValueError("words with a kept column need their part keys (cut.cut_words)")
-    ordered = in_segment_order(words)
-    ordered = ordered[_kept(ordered)]
-    key = "part" if "part" in ordered.columns else "line"
     rows = []
-    for session_key, group in ordered.groupby("session", sort=True):
-        session = int(cast(int, session_key))
-        usable = len(group) - len(group) % n_words
-        for index, first in enumerate(range(0, usable, n_words)):
-            chunk = group.iloc[first : first + n_words]
-            parts = chunk.groupby(key, sort=False).agg(start=("start", "min"), end=("end", "max"))
-            parts = parts.sort_values("start")
-            seconds = float((parts["end"] - parts["start"]).sum()) + gap * (len(parts) - 1)
+    for session, index, chunk, parts, _ in _segment_chunks(words, n_words):
+        seconds = float((parts["end"] - parts["start"]).sum()) + gap * (len(parts) - 1)
+        rows.append(
+            {
+                "segment": f"{session}_{index:03d}",
+                "session": session,
+                "index": index,
+                "starts": parts["start"].round(3).tolist(),
+                "ends": parts["end"].round(3).tolist(),
+                "parts": len(parts),
+                "seconds": round(seconds, 3),
+                "text": " ".join(chunk["word"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+PART_COLUMNS: Final = (
+    "segment",
+    "session",
+    "position",
+    "cut_part",
+    "line",
+    "first",
+    "last",
+    "n_words",
+    "start",
+    "end",
+)
+
+
+def segment_parts(words: pd.DataFrame, n_words: int = SEGMENT_WORDS) -> pd.DataFrame:
+    """List the words of each part of every segment, by line and word index, without their text.
+
+    The segments and parts are those of ``build_segments`` on the same words. A part's
+    words are one unbroken run of one transcript line, so the line and the indices of
+    its first and last word name them: the re-voiced clip (x1) reads them from the
+    transcript. No column of a word's text is read, so this works on the words table
+    of a segments run, which has none.
+
+    Args:
+        words: One row per aligned word, with the columns ``session``, ``line``,
+            ``word_index``, ``start`` and ``end``, and optionally ``kept`` and ``part``,
+            as for ``build_segments``; a ``word`` column is not needed.
+        n_words: Words per segment.
+
+    Returns:
+        One row per part, segment by segment and in clip order, with the columns of
+        ``PART_COLUMNS``: ``position`` (0, 1, ... in the clip), ``cut_part`` (the part
+        key of ``cut.py``, or the line where there is none), ``line``, ``first`` and
+        ``last`` (indices of its first and last word in the line), ``n_words``, and
+        ``start`` and ``end`` (seconds in the session, rounded as ``build_segments``
+        rounds them).
+
+    Raises:
+        ValueError: If the words have a ``kept`` column but no ``part`` column, or a
+            part's words are not one unbroken run of one line.
+    """
+    rows = []
+    for session, index, chunk, parts, key in _segment_chunks(words, n_words):
+        segment = f"{session}_{index:03d}"
+        starts, ends = parts["start"].round(3).tolist(), parts["end"].round(3).tolist()
+        for position, (cut_part, start, end) in enumerate(
+            zip(parts.index.tolist(), starts, ends, strict=True)
+        ):
+            own = chunk[chunk[key] == cut_part]
+            lines = own["line"].unique()
+            indices = own["word_index"].to_numpy(dtype=np.int64)
+            if len(lines) != 1 or not np.array_equal(
+                indices, np.arange(indices[0], indices[0] + len(indices))
+            ):
+                raise ValueError(
+                    f"segment {segment}: the words of part {position} are not one unbroken"
+                    " run of one line"
+                )
             rows.append(
                 {
-                    "segment": f"{session}_{index:03d}",
+                    "segment": segment,
                     "session": session,
-                    "index": index,
-                    "starts": parts["start"].round(3).tolist(),
-                    "ends": parts["end"].round(3).tolist(),
-                    "parts": len(parts),
-                    "seconds": round(seconds, 3),
-                    "text": " ".join(chunk["word"]),
+                    "position": position,
+                    "cut_part": int(cut_part),
+                    "line": int(lines[0]),
+                    "first": int(indices[0]),
+                    "last": int(indices[-1]),
+                    "n_words": len(indices),
+                    "start": start,
+                    "end": end,
                 }
             )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=list(PART_COLUMNS))
 
 
 def segment_neighbours(words: pd.DataFrame, n_words: int = SEGMENT_WORDS) -> pd.DataFrame:

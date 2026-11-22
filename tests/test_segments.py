@@ -9,6 +9,7 @@ from listening_beyond_words.segments import (
     in_segment_order,
     segment_bounds,
     segment_neighbours,
+    segment_parts,
     segment_walls,
 )
 
@@ -217,3 +218,193 @@ def test_bounds_follow_the_participants_turn_and_its_overhanging_words() -> None
     outside = segments.iloc[:1].assign(starts=[[8.2]], ends=[[8.6]])
     with pytest.raises(ValueError, match="no participant turn"):
         segment_bounds(outside, turns)
+
+
+def frozen_build_segments(words: pd.DataFrame, n_words: int = 40, gap: float = 0.3) -> pd.DataFrame:
+    """``build_segments`` as it was when the pinned segments were built (commit 3ff97f4)."""
+    if "kept" in words.columns and "part" not in words.columns:
+        raise ValueError("words with a kept column need their part keys (cut.cut_words)")
+    ordered = words.sort_values(["session", "start", "word_index", "line"], kind="stable")
+    if "kept" in ordered.columns:
+        ordered = ordered[ordered["kept"].to_numpy(dtype=bool)]
+    key = "part" if "part" in ordered.columns else "line"
+    rows = []
+    for session_key, group in ordered.groupby("session", sort=True):
+        session = int(session_key)
+        usable = len(group) - len(group) % n_words
+        for index, first in enumerate(range(0, usable, n_words)):
+            chunk = group.iloc[first : first + n_words]
+            parts = chunk.groupby(key, sort=False).agg(start=("start", "min"), end=("end", "max"))
+            parts = parts.sort_values("start")
+            seconds = float((parts["end"] - parts["start"]).sum()) + gap * (len(parts) - 1)
+            rows.append(
+                {
+                    "segment": f"{session}_{index:03d}",
+                    "session": session,
+                    "index": index,
+                    "starts": parts["start"].round(3).tolist(),
+                    "ends": parts["end"].round(3).tolist(),
+                    "parts": len(parts),
+                    "seconds": round(seconds, 3),
+                    "text": " ".join(chunk["word"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def cut_like(words: pd.DataFrame, dropped_share: float, seed: int) -> pd.DataFrame:
+    """Drop words at random and give the kept words part keys as cut.py does.
+
+    In time order, a new part begins at a new line or after a dropped word; the part
+    keys count on across the session, so a segment's first part rarely has key 0.
+    """
+    rng = np.random.default_rng(seed)
+    ordered = in_segment_order(words).copy()
+    ordered["kept"] = rng.random(len(ordered)) >= dropped_share
+    ordered["score"] = rng.random(len(ordered))
+    parts = []
+    for _, group in ordered.groupby("session", sort=True):
+        kept = group["kept"].to_numpy()
+        lines = group["line"].to_numpy()
+        part = np.full(len(group), -1)
+        position = np.flatnonzero(kept)
+        new = np.ones(len(position), dtype=bool)
+        new[1:] = (lines[position[1:]] != lines[position[:-1]]) | (np.diff(position) > 1)
+        part[position] = np.cumsum(new) - 1
+        parts.append(pd.Series(part, index=group.index))
+    ordered["part"] = pd.concat(parts)
+    return ordered
+
+
+def random_lines(seed: int, session: int, n_lines: int) -> pd.DataFrame:
+    """Lines of 1-60 words at random times; some lines overlap, and some start together."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    start = 0.0
+    for line in range(n_lines):
+        start += float(rng.choice([0.0, 0.25, 3.0, 20.0], p=[0.1, 0.1, 0.4, 0.4]))
+        for index in range(int(rng.integers(1, 61))):
+            begin = round(start + 0.25 * index, 3)
+            rows.append(
+                {
+                    "session": session,
+                    "line": line,
+                    "word_index": index,
+                    "word": f"w{line}x{index}",
+                    "start": begin,
+                    "end": round(begin + 0.2, 3),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def cut_sessions(seed: int) -> pd.DataFrame:
+    words = pd.concat(
+        [random_lines(seed, 9001, 40), random_lines(seed + 1, 9002, 25)], ignore_index=True
+    )
+    return cut_like(words, 0.05, seed)
+
+
+@pytest.mark.parametrize("seed", [9001, 9002, 9003])
+def test_build_segments_is_unchanged_bit_for_bit(seed: int) -> None:
+    words = cut_sessions(seed).sample(frac=1.0, random_state=seed)
+    pd.testing.assert_frame_equal(build_segments(words), frozen_build_segments(words))
+    plain = words.drop(columns=["kept", "part"])  # the line fallback
+    pd.testing.assert_frame_equal(build_segments(plain), frozen_build_segments(plain))
+    with pytest.raises(ValueError, match="part keys"):
+        frozen_build_segments(words.drop(columns=["part"]))
+
+
+def test_the_frozen_copy_meets_tied_part_starts_and_parts_cut_by_segment_edges() -> None:
+    words = cut_sessions(9001)
+    segments = frozen_build_segments(words)
+    tied = sum(len(set(starts)) < len(starts) for starts in segments["starts"])
+    assert tied > 0
+    chunks = in_segment_order(words[words["kept"]]).groupby("session")["part"]
+    edges = 0
+    for _, parts in chunks:
+        usable = len(parts) - len(parts) % 40
+        keys = parts.to_numpy()[:usable]
+        edges += int(np.sum(keys[39:-1:40] == keys[40::40]))
+    assert edges > 0
+
+
+def words_of(parts: pd.DataFrame) -> dict[str, str]:
+    """Each segment's words, read from the synthetic lines by line and word index."""
+    return {
+        segment: " ".join(
+            f"w{row.line}x{index}"
+            for row in group.itertuples()
+            for index in range(row.first, row.last + 1)
+        )
+        for segment, group in parts.groupby("segment", sort=True)
+    }
+
+
+@pytest.mark.parametrize("seed", [9001, 9002, 9003])
+def test_segment_parts_agree_with_the_segments_without_reading_the_words(seed: int) -> None:
+    words = cut_sessions(seed)
+    segments = build_segments(words)
+    parts = segment_parts(words.drop(columns=["word", "score"]))
+    assert list(parts.columns) == [
+        "segment",
+        "session",
+        "position",
+        "cut_part",
+        "line",
+        "first",
+        "last",
+        "n_words",
+        "start",
+        "end",
+    ]
+    assert parts["segment"].unique().tolist() == segments["segment"].tolist()
+    by_segment = parts.groupby("segment", sort=False)
+    for row in segments.itertuples():
+        own = by_segment.get_group(row.segment)
+        assert own["position"].tolist() == list(range(row.parts))
+        assert own["session"].tolist() == [row.session] * row.parts
+        assert own["start"].tolist() == row.starts
+        assert own["end"].tolist() == row.ends
+        assert int(own["n_words"].sum()) == 40
+        assert (own["last"] - own["first"] + 1).tolist() == own["n_words"].tolist()
+    # In time order the parts give back the segment's 40 words; with tied part starts the
+    # words of the tied parts may come in another order.
+    for segment, text in words_of(parts).items():
+        expected = segments.set_index("segment").loc[segment, "text"]
+        assert sorted(text.split()) == sorted(expected.split())
+        starts = segments.set_index("segment").loc[segment, "starts"]
+        if len(set(starts)) == len(starts):
+            assert text == expected
+
+
+def test_each_segment_counts_its_parts_from_0_whatever_their_cut_keys() -> None:
+    words = cut_like(synthetic_words([(0.0, 30), (20.0, 30), (40.0, 25)]), 0.0, 9001)
+    words.loc[words["line"] == 1, "part"] += 6  # cut keys count across the session
+    parts = segment_parts(words)
+    second = parts[parts["segment"] == "9001_001"]
+    assert second["cut_part"].tolist() == [7, 2]
+    assert second["position"].tolist() == [0, 1]
+    assert second[["line", "first", "last", "n_words"]].values.tolist() == [
+        [1, 10, 29, 20],
+        [2, 0, 19, 20],
+    ]
+
+
+def test_segment_parts_refuse_a_part_that_is_not_one_unbroken_run_of_one_line() -> None:
+    words = cut_like(synthetic_words([(0.0, 30), (20.0, 30)]), 0.0, 9001)
+    across = words.assign(part=0)  # one part over two lines
+    with pytest.raises(ValueError, match="not one unbroken run of one line"):
+        segment_parts(across)
+    gap = words[words["word_index"] != 5]  # a word missing from the middle of a part
+    with pytest.raises(ValueError, match="not one unbroken run of one line"):
+        segment_parts(gap)
+    with pytest.raises(ValueError, match="part keys"):
+        segment_parts(words.drop(columns=["part"]))
+
+
+def test_segment_parts_without_part_keys_take_each_line_as_a_part() -> None:
+    words = synthetic_words([(0.0, 30), (20.0, 30), (40.0, 25)])
+    parts = segment_parts(words.drop(columns=["word"]))
+    assert parts["cut_part"].tolist() == parts["line"].tolist() == [0, 1, 1, 2]
+    assert parts["n_words"].tolist() == [30, 10, 20, 20]
