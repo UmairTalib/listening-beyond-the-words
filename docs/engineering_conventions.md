@@ -37,7 +37,8 @@ Inside the package:
 
 ```text
 settings.py      workspace paths, read from LBW_WORKSPACE
-runinfo.py       time, commit, per-item seeds, file hashes, environment and run.json
+runinfo.py       time, commit, per-item seeds, file hashes, environment, run.json and
+                 error records without messages
 sessions.py      the 189 pilot sessions and the guard that refuses every other session
 labels.py        PHQ-8 labels of the pilot
 partitions.py    participants split into folds
@@ -49,7 +50,9 @@ alignment.py     forced alignment of the words to the audio
 cut.py           the cut rule: which words stay, and where a part ends
 segments.py      40-word segments and what lies around their parts
 views.py         the clip versions: x0, x2 and rev, their levels and 16-bit samples
-clips.py         the files around the clips: recordings, segments, listening keys, FLAC
+revoice.py       the re-voiced clip x1: its text, voices and audio, and the Kokoro wrapper
+clips.py         the files around the clips: recordings, transcript lines, pinned inputs,
+                 listening keys, FLAC
 wordcheck.py     the word check (check F4 and the checks of x1)
 models.py        pinned model revisions and the check of loaded weights
 voxtral.py       Voxtral loading, prompt and score
@@ -290,7 +293,7 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, and the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`.
 - Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.

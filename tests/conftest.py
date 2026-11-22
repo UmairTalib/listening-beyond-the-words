@@ -1,8 +1,11 @@
 """Shared test setup: synthetic data only, no network and no real workspace."""
 
 import os
+from pathlib import Path
 
 import pytest
+
+from x1_fakes import X1Workspace, make_x1_workspace
 
 # Tests never download models or data. Set before any test imports transformers.
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -30,3 +33,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     skip = pytest.mark.skip(reason="needs a CUDA GPU")
     for item in gpu_items:
         item.add_marker(skip)
+
+
+@pytest.fixture
+def x1_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> X1Workspace:
+    """A synthetic x1 workspace, with LBW_WORKSPACE pointing at it."""
+    workspace = make_x1_workspace(tmp_path / "workspace")
+    monkeypatch.setenv("LBW_WORKSPACE", str(workspace.root))
+    return workspace

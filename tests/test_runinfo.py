@@ -120,3 +120,29 @@ def test_environment_records_versions_and_the_lock_file(
     assert str(found["python"]).startswith("3.12")
     (tmp_path / "uv.lock").unlink()
     assert environment([])["uv_lock_sha256"] is None
+
+
+def test_error_record_lists_frames_and_types_of_the_whole_chain_but_no_message() -> None:
+    from listening_beyond_words.runinfo import StepError, error_record
+
+    def inner() -> None:
+        raise KeyError("SYNTHETICWORD")
+
+    def outer() -> None:
+        try:
+            inner()
+        except KeyError:
+            raise StepError("segment 300_001, part 2: KeyError") from None
+
+    try:
+        outer()
+    except StepError as error:
+        record = error_record(error)
+    assert "SYNTHETICWORD" not in record
+    assert "segment 300_001" not in record  # not even a message of the step's own
+    lines = record.splitlines()
+    assert lines[0] == "listening_beyond_words.runinfo.StepError"
+    assert "builtins.KeyError" in lines
+    assert any(line.endswith(" in inner") for line in lines)
+    assert any(line.endswith(" in outer") for line in lines)
+    assert all(line.startswith("  ") or "." in line for line in lines)

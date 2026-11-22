@@ -261,3 +261,82 @@ def test_listening_pcm16_recreates_a_listening_file_bit_for_bit(tmp_path: Path, 
     np.testing.assert_array_equal(listening_pcm16(clip), heard)
     # The WAV writer rounds down, so rounding to nearest would not match it.
     assert not np.array_equal(to_pcm16(frozen_listening_copy(clip)), heard)
+
+
+def test_load_cut_words_reads_the_words_of_the_pinned_segments_run(x1_workspace) -> None:
+    words = clips.load_cut_words(Workspace(x1_workspace.root), x1_workspace.config)
+    expected = x1_workspace.words.drop(columns=["word", "score"]).reset_index(drop=True)
+    pd.testing.assert_frame_equal(words, expected)
+    assert "word" not in words.columns
+
+
+def test_load_cut_words_refuses_a_changed_file_or_a_run_that_does_not_list_the_pin(
+    x1_workspace,
+) -> None:
+    workspace, config = Workspace(x1_workspace.root), x1_workspace.config
+    run = x1_workspace.root / "derived" / "segments" / "run-1"
+    built = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    for change in (
+        {"status": "failed"},
+        {"outputs": {**built["outputs"], "segments.parquet": "x"}},
+    ):
+        (run / "run.json").write_text(json.dumps({**built, **change}), encoding="utf-8")
+        with pytest.raises(ValueError, match="does not list the pinned segments"):
+            clips.load_cut_words(workspace, config)
+    outputs = {"segments.parquet": built["outputs"]["segments.parquet"]}
+    (run / "run.json").write_text(json.dumps({**built, "outputs": outputs}), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"no SHA-256 for words\.parquet"):
+        clips.load_cut_words(workspace, config)
+    (run / "run.json").write_text(json.dumps(built), encoding="utf-8")
+    words = pd.read_parquet(run / "words.parquet")
+    words.iloc[:-1].to_parquet(run / "words.parquet", index=False)
+    with pytest.raises(ValueError, match="does not match"):
+        clips.load_cut_words(workspace, config)
+
+
+def test_read_lines_gives_the_text_of_each_line_in_the_aligners_order(tmp_path: Path) -> None:
+    folder = tmp_path / "300_P"
+    folder.mkdir()
+    (folder / "300_Transcript.csv").write_text(
+        'Start_Time,End_Time,Text,Confidence\n9.0,10.0,"second, line",0.9\n1.0,2.0,first,0.8\n',
+        encoding="utf-8",
+    )
+    assert clips.read_lines(tmp_path, 300) == ["first", "second, line"]
+
+
+@pytest.mark.parametrize("session", [9001, 600, 342])
+def test_read_lines_refuses_every_session_outside_the_pilot(tmp_path: Path, session: int) -> None:
+    with pytest.raises(ValueError, match="not a pilot session"):
+        clips.read_lines(tmp_path, session)
+
+
+def test_the_pinned_readers_return_labels_sample_and_manifest(x1_workspace) -> None:
+    workspace, config = Workspace(x1_workspace.root), x1_workspace.config
+    labels = clips.load_pinned_labels(workspace, config)
+    assert list(labels.columns) == ["label", "gender"]
+    assert labels.loc[301, "label"] == 1
+    assert labels.loc[300, "gender"] == "female"
+    sample = clips.load_pinned_sample(workspace, config)
+    assert sample["segment"].tolist() == ["300_001", "301_000"]
+    manifest = clips.load_view_manifest(workspace, config, "x0")
+    assert list(manifest.columns) == list(MANIFEST_COLUMNS)
+    assert len(manifest) == len(x1_workspace.segments)
+
+
+@pytest.mark.parametrize(
+    ("reader", "file"),
+    [
+        (lambda w, c: clips.load_pinned_labels(w, c), "derived/labels/run-1/labels.parquet"),
+        (
+            lambda w, c: clips.load_pinned_sample(w, c),
+            "derived/wordcheck_sample/run-1/sample.parquet",
+        ),
+        (lambda w, c: clips.load_view_manifest(w, c, "x0"), "views/x0/run-1/manifest.parquet"),
+    ],
+)
+def test_the_pinned_readers_refuse_a_changed_file(x1_workspace, reader, file: str) -> None:
+    path = x1_workspace.root / file
+    table = pd.read_parquet(path)
+    table.iloc[:-1].to_parquet(path)
+    with pytest.raises(ValueError, match="does not match"):
+        reader(Workspace(x1_workspace.root), x1_workspace.config)

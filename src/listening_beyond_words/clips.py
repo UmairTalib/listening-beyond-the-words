@@ -1,10 +1,11 @@
 """File helpers shared by the scripts that read the pinned segments and write clips.
 
 The clip code itself (``views.py``) takes arrays. These few functions read and write
-the files around it on OMNI: a session's recording (through the guard in
-``sessions.py``), the pinned segments table, the key of a listening check and the
-FLAC file of a view. They also make the listening copy of a clip, scaled to a common
-loudness, exactly as the listening checks wrote it.
+the files around it on OMNI: a session's recording and transcript lines (through the
+guard in ``sessions.py``), the pinned segments, cut words, labels, word-check sample and
+view manifests, the key of a listening check and the FLAC file of a view. They also
+make the listening copy of a clip, scaled to a common loudness, exactly as the
+listening checks wrote it.
 """
 
 import hashlib
@@ -21,6 +22,7 @@ import soundfile as sf
 from listening_beyond_words.runinfo import check_sha256, sha256_file
 from listening_beyond_words.sessions import session_files
 from listening_beyond_words.settings import Workspace
+from listening_beyond_words.transcripts import read_transcript
 from listening_beyond_words.views import PCM16_SCALE, SAMPLING_RATE, Window, clip_peak, clip_rms
 
 LISTENING_RMS: Final = 0.1  # common loudness of the listening copies (-20 dBFS) ...
@@ -84,6 +86,114 @@ def load_segments(workspace: Workspace, config: dict) -> pd.DataFrame:
         if built["settings"][name] != json.loads(json.dumps(config[name])):
             raise ValueError(f"the pinned segments were built with other {name} settings")
     return pd.read_parquet(path).sort_values("segment", ignore_index=True)
+
+
+def _pinned_file(workspace: Workspace, pin: dict, name: str) -> Path:
+    """A file of a pinned run, after checking it against the pinned SHA-256."""
+    path = workspace.resolve(pin["run"]) / name
+    check_sha256(path, pin["sha256"])
+    return path
+
+
+def load_cut_words(workspace: Workspace, config: dict) -> pd.DataFrame:
+    """The words table of the pinned segments run: every aligned word, kept or not, without text.
+
+    The pin covers ``segments.parquet`` only. The run's ``run.json`` lists the SHA-256 of
+    every file it wrote, so this checks that it lists the pinned one for the segments and
+    that ``words.parquet`` matches the one it lists.
+
+    Args:
+        workspace: The workspace.
+        config: The data config, with the ``segments`` pin.
+
+    Returns:
+        One row per aligned word: ``session``, ``line``, ``word_index``, ``start``,
+        ``end``, ``kept``, ``part``, ``cause`` and the cut rule's flags.
+
+    Raises:
+        ValueError: If the run did not finish, its ``run.json`` lists another SHA-256 for
+            the segments or none for the words, or the words file does not match.
+    """
+    pin = config["segments"]
+    run = workspace.resolve(pin["run"])
+    built = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    outputs = built.get("outputs") or {}
+    if built.get("status") != "done" or outputs.get("segments.parquet") != pin["sha256"]:
+        raise ValueError("the segments run's run.json does not list the pinned segments as done")
+    if "words.parquet" not in outputs:
+        raise ValueError("the segments run's run.json lists no SHA-256 for words.parquet")
+    path = run / "words.parquet"
+    check_sha256(path, outputs["words.parquet"])
+    return pd.read_parquet(path)
+
+
+def read_lines(sessions_dir: Path, session_id: int) -> list[str]:
+    """Read the text of a pilot session's transcript lines, as the alignment numbered them.
+
+    Args:
+        sessions_dir: Folder with the unpacked sessions, ``<workspace>/edaic/sessions``.
+        session_id: A pilot session ID; every other ID is refused before any file opens.
+
+    Returns:
+        The text of each line, in the order of ``transcripts.read_transcript`` (by start
+        time), so that a word's ``line`` is its index here.
+
+    Raises:
+        ValueError: If the ID is not a pilot session or the file is not an E-DAIC transcript.
+    """
+    _, transcript_path = session_files(sessions_dir, session_id)
+    return [str(text) for text in read_transcript(transcript_path)["text"]]
+
+
+def load_pinned_labels(workspace: Workspace, config: dict) -> pd.DataFrame:
+    """The pinned labels: PHQ-8 class and gender of each pilot participant.
+
+    Args:
+        workspace: The workspace.
+        config: The data config, with the ``labels`` pin.
+
+    Returns:
+        One row per participant, indexed by session ID, with the columns ``label`` (1 if
+        the PHQ-8 total is 10 or more) and ``gender``.
+
+    Raises:
+        ValueError: If the file does not match its SHA-256.
+    """
+    labels = pd.read_parquet(_pinned_file(workspace, config["labels"], "labels.parquet"))
+    return labels[["label", "gender"]]
+
+
+def load_pinned_sample(workspace: Workspace, config: dict) -> pd.DataFrame:
+    """The pinned word-check sample: the segments that the word check transcribes.
+
+    Args:
+        workspace: The workspace.
+        config: The data config, with the ``wordcheck_sample`` pin.
+
+    Returns:
+        One row per drawn segment, with the columns ``segment`` and ``session``.
+
+    Raises:
+        ValueError: If the file does not match its SHA-256.
+    """
+    return pd.read_parquet(_pinned_file(workspace, config["wordcheck_sample"], "sample.parquet"))
+
+
+def load_view_manifest(workspace: Workspace, config: dict, view: str) -> pd.DataFrame:
+    """The manifest of a pinned clip version (``view_runs``).
+
+    Args:
+        workspace: The workspace.
+        config: The data config, with the ``view_runs`` pins.
+        view: The clip version, such as ``x0``.
+
+    Returns:
+        One row per clip, with the columns of ``MANIFEST_COLUMNS``.
+
+    Raises:
+        ValueError: If the file does not match its SHA-256.
+    """
+    return pd.read_parquet(_pinned_file(workspace, config["view_runs"][view], "manifest.parquet"))
 
 
 def listening_gain(clip: np.ndarray) -> float:

@@ -1,10 +1,11 @@
-"""What every step records about itself: time, commit, seeds, file hashes and run.json."""
+"""What every step records about itself: time, commit, seeds, file hashes, run.json and errors."""
 
 import hashlib
 import json
 import numbers
 import platform
 import subprocess
+import traceback
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -130,6 +131,41 @@ def environment(packages: Sequence[str]) -> dict[str, object]:
         "cpu": cpu,
         "uv_lock_sha256": sha256_file(LOCK_FILE) if LOCK_FILE.is_file() else None,
     }
+
+
+class StepError(Exception):
+    """An error raised by a step's own rules, such as a refused input or a stop rule.
+
+    Its message is written by the step and names rules, counts and IDs, never participant
+    text, so it may be printed and stored in ``run.json``. Every other error is reported
+    by its type only, because its message could hold a word.
+    """
+
+
+def error_record(error: BaseException) -> str:
+    """Describe an error for ``errors.log``: traceback frames and type names, never a message.
+
+    The error and every error in its chain (its cause or context) are listed, from the
+    last raised to the first, each with its frames as file, line and function. No
+    message and no source line is written, so the record holds no participant text even
+    when a message would.
+
+    Args:
+        error: The error that stopped a step.
+
+    Returns:
+        The record, one line per error type and one indented line per frame.
+    """
+    lines: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        lines.append(f"{type(current).__module__}.{type(current).__qualname__}")
+        for frame in traceback.extract_tb(current.__traceback__):
+            lines.append(f"  {frame.filename}:{frame.lineno} in {frame.name}")
+        current = current.__cause__ or current.__context__
+    return "\n".join(lines) + "\n"
 
 
 def _plain(value: Any) -> Any:
