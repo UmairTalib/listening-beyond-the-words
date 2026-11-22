@@ -721,3 +721,18 @@ def test_data_config_pins_the_view_and_sample_settings() -> None:
         "rev": {"window_ms": 250},
     }
     assert config["word_check"]["sample"] == {"seed": 105, "segments_per_participant": 5}
+
+
+def test_data_config_pins_each_built_view_and_the_sample_by_a_file_hash() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    runs = config["view_runs"]
+    assert set(runs) == {"x0", "x2", "rev"}
+    for view, pin in runs.items():
+        assert set(pin) == {"run", "sha256"}
+        assert pin["run"].startswith(f"views/{view}/run-")
+        assert len(pin["sha256"]) == 64
+        assert set(pin["sha256"]) <= set("0123456789abcdef")
+    assert len({pin["run"].rsplit("-", 1)[1] for pin in runs.values()}) == 1  # one build job
+    sample = config["wordcheck_sample"]
+    assert sample["run"].startswith("derived/wordcheck_sample/run-")
+    assert len(sample["sha256"]) == 64

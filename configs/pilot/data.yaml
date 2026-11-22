@@ -48,6 +48,21 @@ word_check: # docs/pilot_protocol.md, check F4 and section "Clip versions"
     seed: 105
     segments_per_participant: 5 # all of a participant's segments if fewer
 
+wordcheck_sample: # the segments that the word check transcribes, drawn 2026-11-22 (seed 105): 943 segments
+  run: derived/wordcheck_sample/run-20261122T042544Z # written by scripts/draw_wordcheck_sample.py
+  sha256: 83b977b365f9286848ceeb8d3164eacbf977a726e74e1b34ff5e569f1498e6cd # of its sample.parquet
+
+view_runs: # the clip versions of all 5,883 segments, built by scripts/build_views.py, job 12557091 (2026-11-22)
+  x0:
+    run: views/x0/run-12557091
+    sha256: 793cbc044141ca1a51f9286db9ce45c44b97270fbe35768dd240b330201bf413 # of its manifest.parquet
+  x2:
+    run: views/x2/run-12557091
+    sha256: fcfa89b561d1bdbf774a798755482eb67c85b2c91a32ecaff8a6701abc6d9057 # of its manifest.parquet
+  rev:
+    run: views/rev/run-12557091
+    sha256: acbe8f10426956de0dcdf4ac522a0bd1b9271042b1bfa177a5c0a1e47ed0ea30 # of its manifest.parquet
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet
