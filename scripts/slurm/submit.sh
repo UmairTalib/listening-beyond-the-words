@@ -2,11 +2,13 @@
 # submit.sh: submit a job file from scripts/slurm/ with the project's log location.
 #
 # Usage:   scripts/slurm/submit.sh [--sbatch-option=value ...] <job> [job arguments]
-# Example: scripts/slurm/submit.sh --array=0-9%4 train configs/pilot/cpg.yaml
+# Example: scripts/slurm/submit.sh --array=0-9%10 train configs/pilot/cpg.yaml
 #
 # <job> names the file scripts/slurm/<job>.sbatch. Give sbatch options in the
 # --option=value form, before the job name. Run it on an OMNI login node.
-# Logs go to $LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log.
+# Logs go to $LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log. Every job is submitted
+# with --no-requeue: Slurm on OMNI would otherwise requeue a job after a node failure
+# under the same job ID, and the requeued job would meet its own half-written output.
 set -euo pipefail
 umask 077
 
@@ -32,4 +34,4 @@ logs="$LBW_WORKSPACE/logs/slurm"
 mkdir -p "$logs"
 LBW_COMMIT="$(git rev-parse HEAD)"
 export LBW_COMMIT
-sbatch --output="$logs/%x-%j.log" ${opts[@]+"${opts[@]}"} "$file" "$@"
+sbatch --output="$logs/%x-%j.log" ${opts[@]+"${opts[@]}"} --no-requeue "$file" "$@"

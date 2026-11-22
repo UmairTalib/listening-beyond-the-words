@@ -6,6 +6,7 @@
 # Submit jobs with scripts/slurm/submit.sh, which runs sbatch from the repository root.
 
 umask 077
+ulimit -c 0 # no core dumps: a crash must not write process memory into the clone
 : "${LBW_WORKSPACE:?LBW_WORKSPACE is not set; see docs/engineering_conventions.md}"
 cd "${SLURM_SUBMIT_DIR:?submit this job with scripts/slurm/submit.sh}" || exit 1
 

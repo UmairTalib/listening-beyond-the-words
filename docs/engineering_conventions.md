@@ -252,7 +252,7 @@ The data steps built so far record the fields that apply to them: `config` holds
 ## 9. Slurm jobs
 
 - A step that needs a GPU, or that runs for more than a few minutes on a CPU, has one job file, `scripts/slurm/<step>.sbatch` (section 1); shorter steps run on a login node. Job names are `lbw-<step>` in hyphens, plus the arm where it helps (`lbw-train-cpg`).
-- Submit with `scripts/slurm/submit.sh [--option=value ...] <step> [arguments]`. It refuses a checkout with uncommitted changes, sends the log to `$LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log` and records the commit for the job to check.
+- Submit with `scripts/slurm/submit.sh [--option=value ...] <step> [arguments]`. It refuses a checkout with uncommitted changes, sends the log to `$LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log`, records the commit for the job to check and submits every job with `--no-requeue`. Slurm on OMNI would otherwise requeue a job after a node failure under the same job ID, and the requeued job would meet its own half-written output. A job lost this way is rerun by hand.
 - Every job file has this shape, shown here for the planned train job:
 
 ```bash
@@ -262,7 +262,7 @@ The data steps built so far record the fields that apply to them: `config` holds
 # Submit from an OMNI login node:
 #   scripts/slurm/submit.sh --job-name=lbw-train-cpg train configs/pilot/cpg.yaml
 #
-# Array task t trains round t/5 + 1, fold t%5 + 1 (10 fold-runs), at most 4 at once.
+# Array task t trains round t/5 + 1, fold t%5 + 1 (10 fold-runs), at most 10 at once.
 #
 #SBATCH --job-name=lbw-train
 #SBATCH --partition=gpu
@@ -272,7 +272,7 @@ The data steps built so far record the fields that apply to them: `config` holds
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=06:00:00
-#SBATCH --array=0-9%4
+#SBATCH --array=0-9%10
 set -euo pipefail
 source scripts/slurm/common.sh
 
@@ -282,9 +282,9 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
 ```
 
 - Order: shebang, a comment with the purpose, how to submit and any array mapping, then the `#SBATCH` lines. Slurm stops reading `#SBATCH` lines at the first command.
-- Set partition, time, memory and CPUs explicitly. GPU steps use `--partition=gpu --gres=gpu:1`. CPU steps use `short` when they fit its time limit, otherwise `medium`. Ask for about 1.5 times the measured run time; the limit is 1 day.
-- Independent runs go side by side as array tasks with one GPU each, at most 4 at once (`%4`).
-- `common.sh` sets `umask 077`, purges the modules (the PyTorch wheels bring their own CUDA), activates the environment, sets `HF_HOME`, `HF_HUB_OFFLINE=1` and the determinism variables, and prints the job, node and commit.
+- Set partition, time, memory and CPUs explicitly. GPU steps use `--partition=gpu --gres=gpu:1`. CPU steps use `short` when they fit its time limit, otherwise `medium`. Ask for about 1.5 times the measured run time; the limit is 6 h on `short` and 1 day on `gpu` and `medium`.
+- Independent runs go side by side as array tasks: on `gpu` with one GPU each, at most 10 at once (`%10`); on `short`, at most 20 at once (`%20`).
+- `common.sh` sets `umask 077`, turns off core dumps (`ulimit -c 0`, so that a crash never writes process memory into the clone), purges the modules (the PyTorch wheels bring their own CUDA), activates the environment, sets `HF_HOME`, `HF_HUB_OFFLINE=1` and the determinism variables, and prints the job, node and commit.
 - Jobs never download. Fetch models on a login node into `$LBW_WORKSPACE/hf` first, at the revisions in `configs/pilot/models.yaml`.
 - A job never deletes or overwrites earlier output. A failed run keeps its folder with `status: failed`; the rerun writes a new folder.
 
