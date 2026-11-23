@@ -37,6 +37,7 @@ views: # docs/pilot_protocol.md, section "Clip versions"; fixed on 2026-11-20, b
   peak_limit: 0.99 # after its RMS is set, an x1 or x2 clip whose peak is above this is scaled down to it as a whole; such clips are counted
   flac_bits: 16 # every view is stored as 16-bit FLAC, with a manifest: each file's length, RMS, peak and SHA-256, and each part's start and end sample
   x1: # re-voiced (pilot protocol, bullet "Re-voiced clip"; fixed on 2026-11-22, before x1 is built)
+    # text (revoice.part_text; no setting here): changed on 2026-11-23, after the dry run of job 12574475 found a word without a sound and before any render: a word whose stored form is only digits is written out in words, by its value, as misaki reads those digits as a number standing on its own (num2words 0.5.14)
     voices: # Kokoro voices; within each gender, participants ordered by PHQ-8 class (negative first), then ID, alternate between them, starting with the first
       female: [af_heart, af_bella]
       male: [am_michael, am_fenrir]
