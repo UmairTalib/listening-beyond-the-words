@@ -19,9 +19,12 @@ import yaml
 REPO = Path(__file__).parents[1]
 # A word that stands for participant text: no output that may leave OMNI may hold it.
 SECRET = "SYNTHETICWORD"
+# "1990", "9:45" and "'007" are written out in words ("nineteen ninety", "nine forty
+# five", "seven"), and "3rd" mixes digits and letters. Each has as many stored words as
+# the token it replaced, so that the draws keep their shape.
 X1_TOKENS = (
-    "well", "I'm", "fine", "the", "x-ray", "PTSD", "9:30", "don\u2019t", SECRET, "yeah",
-    "really", "LA", "okay.", "we'll", "rock'n'roll", "so,", "it's", "a", "lot",
+    "well", "I'm", "1990", "the", "x-ray", "PTSD", "9:45", "don\u2019t", SECRET, "yeah",
+    "'007", "LA", "okay.", "we'll", "rock'n'roll", "so,", "it's", "a", "3rd",
 )  # fmt: skip
 X1_LABELS = {  # session: (label, gender); 304 has no segments
     300: (0, "female"),
@@ -222,13 +225,14 @@ def fake_token(
     *,
     own: int | None = 4,
     merged: int | None = None,
+    tag: str = "NN",
 ) -> SimpleNamespace:
     """A token as misaki 0.9.4 makes it: the rating on the token or in its ``_``."""
     token = SimpleNamespace(
         text=text,
         whitespace=whitespace,
         phonemes=phonemes,
-        tag="NN",
+        tag=tag,
         _=SimpleNamespace(rating=merged),
     )
     if own is not None:
@@ -241,30 +245,41 @@ class FakePipeline:
 
     Args:
         readings: Token specs of particular words, as lists of (phonemes, own rating,
-            merged rating); every other word becomes one token from ``fake_phonemes``.
+            merged rating) or (phonemes, own rating, merged rating, tag, token text);
+            every other word becomes one token from ``fake_phonemes``.
         results: How many results each call yields.
         phonemes: Phonemes each result claims instead of the front end's.
         printing: Whether the front end prints a line with the text, as misaki does.
         fail_on: A word whose call raises an error that holds the text.
+        punctuation_digits: Whether a word without a letter is read as misaki reads a
+            token that spaCy tagged as punctuation: one token tagged ".", no phonemes,
+            misaki's rating 4 in its ``_``.
     """
 
     def __init__(
         self,
-        readings: dict[str, list[tuple[str | None, int | None, int | None]]] | None = None,
+        readings: dict[str, list[tuple[Any, ...]]] | None = None,
         *,
         results: int = 1,
         phonemes: str | None = None,
         printing: bool = False,
         fail_on: str | None = None,
+        punctuation_digits: bool = False,
     ) -> None:
         self.readings = readings or {}
         self.results = results
         self.phonemes = phonemes
         self.printing = printing
         self.fail_on = fail_on
+        self.punctuation_digits = punctuation_digits
         self.calls: list[tuple[str, str, float]] = []
+        self.texts: list[str] = []  # every text given to the front end, in order
 
     def g2p(self, text: str) -> tuple[str, list[SimpleNamespace]]:
+        self.texts.append(text)
+        return self.read(text)
+
+    def read(self, text: str) -> tuple[str, list[SimpleNamespace]]:
         if self.printing:
             print("TODO:NUM", text)  # noqa: T201  (misaki prints like this)
         if self.fail_on is not None and self.fail_on in text.split():
@@ -272,17 +287,21 @@ class FakePipeline:
         words = text.split()
         tokens = []
         for k, word in enumerate(words):
-            specs = self.readings.get(word) or [(fake_phonemes(word), 4, None)]
-            for j, (phonemes, own, merged) in enumerate(specs):
+            if self.punctuation_digits and not any(c.isalpha() for c in word):
+                specs: list[tuple[Any, ...]] = [("", None, 4, ".", word)]
+            else:
+                specs = self.readings.get(word) or [(fake_phonemes(word), 4, None)]
+            for j, (phonemes, own, merged, *named) in enumerate(specs):
+                tag, piece = named or ("NN", f"{word}{j}")
                 space = " " if j == len(specs) - 1 and k < len(words) - 1 else ""
-                tokens.append(fake_token(f"{word}{j}", space, phonemes, own=own, merged=merged))
+                tokens.append(fake_token(piece, space, phonemes, own=own, merged=merged, tag=tag))
         return "".join((t.phonemes or "") + t.whitespace for t in tokens), tokens
 
     def __call__(self, text: str, voice: str, speed: float) -> Any:
         import torch
 
         self.calls.append((text, voice, speed))
-        _, tokens = self.g2p(text)
+        _, tokens = self.read(text)
         phonemes = "".join((t.phonemes or "") + (" " if t.whitespace else "") for t in tokens)
         for _ in range(self.results):
             lead, tail, body = 7200, 14400, 2400 * len(text.split())
@@ -293,6 +312,27 @@ class FakePipeline:
                 audio=audio.float(),
                 pred_dur=torch.tensor([12, 3, 4, 5, 30]),
             )
+
+
+class LookAheadPipeline(FakePipeline):
+    """A stand-in whose reading of a word depends on the next word, as misaki's can.
+
+    Before a word without a letter, "the" gets other phonemes with the same tag, as
+    misaki's look-ahead gives them, and "in" another tag and other phonemes, as spaCy's
+    tagging can. Every word must be one token.
+    """
+
+    def read(self, text: str) -> tuple[str, list[SimpleNamespace]]:
+        _, tokens = super().read(text)
+        words = text.split()
+        assert len(tokens) == len(words), "the look-ahead stand-in reads one token per word"
+        for word, after, token in zip(words, [*words[1:], ""], tokens, strict=True):
+            if after and not any(character.isalpha() for character in after):
+                if word == "the":
+                    token.phonemes = "ðˈi"
+                elif word == "in":
+                    token.phonemes, token.tag = "ˈɪn", "RP"
+        return "".join((t.phonemes or "") + t.whitespace for t in tokens), tokens
 
 
 def fake_kokoro(pipeline: FakePipeline | None = None, settings: Any = None) -> Any:

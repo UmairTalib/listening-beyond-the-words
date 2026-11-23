@@ -103,6 +103,42 @@ def test_every_task_renders_its_own_sessions_into_one_shared_run(
     assert out.count("task run: views/x1/run-600/tasks/") == TASKS
 
 
+def test_every_task_reads_the_text_with_numbers_written_out(
+    x1_workspace: X1Workspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from listening_beyond_words.transcripts import normalise
+
+    run_check(x1_workspace, monkeypatch)
+    module = load_script("build_revoiced")
+    pipeline = patch_script(module, x1_workspace, monkeypatch)
+    for task in range(TASKS):
+        run_task(module, monkeypatch, task)
+    out, err = capsys.readouterr()
+    run = run_of(x1_workspace)
+    parts = pd.concat(
+        [pd.read_parquet(run / "tasks" / str(t) / "parts.parquet") for t in range(TASKS)],
+        ignore_index=True,
+    )
+    # Kokoro read exactly the texts that parts.parquet records, in the same order.
+    assert [text for text, _, _ in pipeline.calls] == parts["text"].tolist()
+    assert not any(word.isdigit() for text in parts["text"] for word in text.split())
+    assert parts["written_text"].map(lambda t: len(normalise(t).split())).tolist() == (
+        parts["n_words"].tolist()
+    )
+    assert (parts["words_read"] == parts["text"].str.split().str.len()).all()
+    assert (parts["words_read"] >= parts["n_words"]).all()
+    assert parts["numbers"].sum() > 0
+    counts = [info_of(run / "tasks" / str(t))["counts"] for t in range(TASKS)]
+    assert sum(c["words_read"] for c in counts) == parts["words_read"].sum()
+    assert sum(c["numbers_written_out"] for c in counts) == parts["numbers"].sum()
+    assert "numbers written out," in out
+    for task in range(TASKS):
+        folder = run / "tasks" / str(task)
+        leaving = outside_text(folder / "run.json", streams=out + err)
+        for word in (SECRET.lower(), "forty", "nineteen"):
+            assert word not in leaving
+
+
 def test_the_test_render_equals_the_full_render(
     build: tuple[Any, X1Workspace], monkeypatch: pytest.MonkeyPatch
 ) -> None:

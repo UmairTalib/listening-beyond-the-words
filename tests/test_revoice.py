@@ -30,6 +30,7 @@ from listening_beyond_words.revoice import (
     part_text,
     render_segment,
     segment_words,
+    spoken_number,
     trim_quiet,
     word_classes,
     word_has_sound,
@@ -101,7 +102,7 @@ def test_written_form_keeps_capitals_and_apostrophes_and_drops_other_marks(
 
 
 @pytest.mark.parametrize(
-    ("line", "first", "last", "text"),
+    ("line", "first", "last", "written"),
     [
         ("Well I'm fine", 0, 2, "Well I'm fine"),
         (f"I{TYPOGRAPHIC}m here", 0, 1, "I'm here"),
@@ -117,18 +118,111 @@ def test_written_form_keeps_capitals_and_apostrophes_and_drops_other_marks(
     ],
 )
 def test_part_text_reads_the_words_as_written_where_they_lie_whole_in_the_part(
-    line: str, first: int, last: int, text: str
+    line: str, first: int, last: int, written: str
 ) -> None:
     made = part_text(line, first, last)
-    assert made.text == text
-    assert normalise(made.text).split() == normalise(line).split()[first : last + 1]
+    assert made.written_text == written
+    assert normalise(made.written_text).split() == normalise(line).split()[first : last + 1]
+    if not any(character.isdigit() for character in written):
+        assert made.text == written
+        assert made.written_out == (0,) * len(written.split())
+
+
+@pytest.mark.parametrize(
+    ("digits", "words"),
+    [
+        ("0", "zero"),
+        ("00", "zero"),
+        ("000", "zero"),
+        ("0000", "zero"),
+        ("007", "seven"),
+        ("05", "five"),
+        ("7", "seven"),
+        ("10", "ten"),
+        ("15", "fifteen"),
+        ("42", "forty two"),
+        ("45", "forty five"),
+        ("100", "one hundred"),
+        ("105", "one hundred five"),
+        ("125", "one hundred twenty five"),
+        ("1000", "one thousand"),
+        ("1500", "fifteen hundred"),
+        ("1900", "nineteen hundred"),
+        ("1905", "nineteen oh five"),
+        ("1990", "nineteen ninety"),
+        ("2000", "two thousand"),
+        ("2005", "two thousand five"),
+        ("2010", "twenty ten"),
+        ("0123", "one twenty three"),
+        ("0800", "eight hundred"),
+        ("12345", "twelve thousand three hundred forty five"),
+        ("100000", "one hundred thousand"),
+        ("1234567", "one million two hundred thirty four thousand five hundred sixty seven"),
+    ],
+)
+def test_a_number_is_written_out_as_misaki_reads_it_by_its_value(digits: str, words: str) -> None:
+    # Checked against misaki 0.9.4's Lexicon.get_number on OMNI (and by the slow test).
+    assert spoken_number(digits) == words
+
+
+@pytest.mark.parametrize(
+    "refused", ["", "12a", "1 2", "-5", "1.5", " 7", chr(0x0661) + chr(0x0662), chr(0x00B2)]
+)
+def test_only_a_word_of_ascii_digits_is_written_out(refused: str) -> None:
+    with pytest.raises(ValueError, match="only a word of ASCII digits") as caught:
+        spoken_number(refused)
+    if refused.strip():
+        assert refused.strip() not in str(caught.value)
+
+
+def test_an_error_inside_num2words_never_shows_the_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    def failing(number: int, to: str) -> str:
+        raise OverflowError(f"abs({number}) must be less than 10**306")
+
+    monkeypatch.setattr(revoice, "num2words", failing)
+    with pytest.raises(ValueError, match="num2words could not write out a number") as caught:
+        spoken_number("4242")
+    assert "4242" not in str(caught.value)
+    assert caught.value.__context__ is None  # raised outside the except clause
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("line", "first", "last", "written", "text"),
+    [
+        ("at 9:30 then", 1, 2, "9 30", "nine thirty"),
+        ("at 9:30 then", 0, 1, "at 9", "at nine"),  # 9:30 split at the part's end
+        ("at 9:30 then", 2, 3, "30 then", "thirty then"),  # and at its start
+        ("in 1990 or 1990s", 0, 3, "in 1990 or 1990s", "in nineteen ninety or 1990s"),
+        ("the 3rd one", 0, 2, "the 3rd one", "the 3rd one"),  # digits and letters: Kokoro's
+        ("back in '90 yes", 0, 3, "back in '90 yes", "back in ninety yes"),  # stored: 90
+        ("007 and 0123", 0, 2, "007 and 0123", "seven and one twenty three"),
+        ("1,000 people", 0, 2, "1 000 people", "one zero people"),  # misaki's own reading
+    ],
+)
+def test_part_text_writes_out_each_word_whose_stored_form_is_only_digits(
+    line: str, first: int, last: int, written: str, text: str
+) -> None:
+    made = part_text(line, first, last)
+    assert (made.written_text, made.text) == (written, text)
+    assert normalise(made.written_text).split() == normalise(line).split()[first : last + 1]
+    assert len(made.written_out) == len(written.split())
+    assert len(made.in_number) == len(text.split())
+    for word, count in zip(written.split(), made.written_out, strict=True):
+        assert count == (
+            len(spoken_number(normalise(word)).split()) if normalise(word).isdigit() else 0
+        )
 
 
 def test_part_text_counts_how_the_text_was_made() -> None:
-    line = f"[so] I{TYPOGRAPHIC}m x-ray {DOTTED_I}t ok"
-    whole = part_text(line, 0, 6)
-    assert whole.text == "so I'm x ray i t ok"
-    assert (whole.written, whole.unmatched, whole.typographic, whole.brackets) == (4, 1, 1, 1)
+    line = f"[so] I{TYPOGRAPHIC}m x-ray {DOTTED_I}t ok 42"
+    whole = part_text(line, 0, 7)
+    assert whole.written_text == "so I'm x ray i t ok 42"
+    assert whole.text == "so I'm x ray i t ok forty two"
+    assert (whole.written, whole.unmatched, whole.typographic, whole.brackets) == (5, 1, 1, 1)
+    assert whole.written_out == (0, 0, 0, 0, 0, 0, 0, 2)
+    assert whole.numbers == 1
+    assert whole.in_number == (False,) * 7 + (True, True)
     assert not whole.split_start
     assert not whole.split_end
     middle = part_text(line, 3, 3)  # "ray" alone
@@ -165,7 +259,7 @@ ALPHABET = [
 @pytest.mark.parametrize("seed", range(5))
 def test_part_text_always_gives_back_the_stored_words_of_a_random_part(seed: int) -> None:
     rng = np.random.default_rng(seed)
-    checked = 0
+    checked = numbers = 0
     for _ in range(2000):
         line = "".join(rng.choice(ALPHABET, size=int(rng.integers(1, 60))))
         stored = normalise(line).split()
@@ -174,10 +268,27 @@ def test_part_text_always_gives_back_the_stored_words_of_a_random_part(seed: int
         first = int(rng.integers(len(stored)))
         last = int(rng.integers(first, len(stored)))
         made = part_text(line, first, last)
-        assert normalise(made.text).split() == stored[first : last + 1]
+        # The words as written give back the stored words exactly; the text read gives
+        # them back with each word of ASCII digits written out, and every word has a letter.
+        assert normalise(made.written_text).split() == stored[first : last + 1]
+        expected = [
+            word
+            for stored_word in stored[first : last + 1]
+            for word in (
+                spoken_number(stored_word).split()
+                if stored_word.isascii() and stored_word.isdigit()
+                else [stored_word]
+            )
+        ]
+        assert normalise(made.text).split() == expected
+        assert all(any(character.isalpha() for character in word) for word in made.text.split())
         assert made.text == " ".join(made.text.split())
+        assert len(made.in_number) == len(made.text.split())
+        assert sum(made.written_out) == sum(made.in_number)
+        numbers += made.numbers
         checked += 1
     assert checked > 1500
+    assert numbers > 100
 
 
 # A part ends between the two stored words of "x-ray" for each reason a part can end.
@@ -660,9 +771,12 @@ def test_each_part_is_seeded_by_segment_and_position_from_0_whatever_its_cut_key
     assert len(set(seeds)) == 3
     assert [text for text, _, _ in kokoro.calls] == [
         "ray was fine",
-        f"I'm {SECRET} at 9 30 yes",
+        f"I'm {SECRET} at nine thirty yes",
         "so it goes",
     ]
+    assert rendered.parts[1]["written_text"] == f"I'm {SECRET} at 9 30 yes"
+    assert [record["numbers"] for record in rendered.parts] == [0, 2, 0]
+    assert [record["words_read"] for record in rendered.parts] == [3, 6, 3]
     assert {voice for _, voice, _ in kokoro.calls} == {"af_bella"}
     again = render_segment(SeededKokoro(), parts, LINES, "af_bella", "300_004", settings())
     np.testing.assert_array_equal(rendered.samples, again.samples)
@@ -774,6 +888,60 @@ def test_the_front_end_groups_tokens_into_written_words_and_reads_both_rating_fi
     assert front.silent == 0
     assert front.ok
     assert front.phonemes == "ˈIm zˈɔɹbəlfæks ɹˈɑkənɹˌOl ˈyes"
+    assert front.word_phonemes == ("ˈIm", "zˈɔɹbəlfæks", "ɹˈɑkənɹˌOl", "ˈyes")
+    assert not any(word.punctuation or word.lost_piece for word in front.words)
+
+
+def test_the_front_end_marks_words_with_a_piece_that_misaki_read_as_punctuation() -> None:
+    # (phonemes, own rating, merged rating, spaCy tag, token text), as misaki makes them.
+    readings = {
+        "90s": [("", None, 4, ",", "90"), ("ˈɛs", 4, None, ",", "s")],  # "90" lost, s kept
+        "I'm": [  # an apostrophe read as punctuation: the word is split into letters
+            ("ˈI", 4, None, "PRP", "I"),
+            ("", None, 4, "NFP", "'"),
+            ("ˈɛm", 4, None, "NFP", "m"),
+        ],
+        "uh": [("ˈʌ", 4, None, ".", "uh")],  # letters only: misaki's lexicon reads it
+        "'cause": [("“", None, 4, "``", "'"), ("kˈʌz", 4, None, "IN", "cause")],  # a quote mark
+        "don't": [("dˈO", 4, None, "VB", "do"), ("", None, 4, ".", "n't")],  # n't lost
+        # Silent pieces that misaki did not read as punctuation: letters only, or no
+        # punctuation tag.
+        "uhm": [("ˈʌm", 4, None, "UH", "uhm"), ("", None, 4, ".", "uh")],
+        "ok'": [("ˈOkA", 4, None, "UH", "ok"), ("", None, 4, "NN", "'")],
+    }
+    front = front_end_of("so 90s I'm uh 'cause don't uhm ok' yes", readings=readings)
+    no, yes = False, True
+    assert [word.punctuation for word in front.words] == [no, yes, yes, no, yes, yes, no, no, no]
+    assert [word.lost_piece for word in front.words] == [no, yes, no, no, no, yes, no, no, no]
+    assert front.silent == 0  # every word keeps a sound, so no stop rule sees them
+    assert front.ok
+    assert front.word_phonemes[1:3] == ("ˈɛs", "ˈIˈɛm")
+
+
+def test_a_number_read_as_punctuation_is_silent_unless_it_is_written_out() -> None:
+    as_written = front_end_of("maybe 00 yes", punctuation_digits=True)
+    assert as_written.silent == 1
+    assert as_written.words[1].punctuation
+    assert (as_written.words[1].rating, as_written.words[1].tags) == (4, (".",))
+    made = part_text("maybe 00 yes", 0, 2)
+    assert made.text == "maybe zero yes"
+    read = front_end_of(made.text, punctuation_digits=True)
+    assert read.silent == 0
+    assert read.ok
+
+
+@pytest.mark.slow
+def test_numbers_are_written_out_exactly_as_misaki_reads_them() -> None:
+    """OMNI only, where misaki is installed: the readings of misaki 0.9.4 itself."""
+    en = pytest.importorskip("misaki.en")
+    lexicon = en.Lexicon(british=False)
+    extra = ["00", "000", "0000", "007", "0123", "0800", "100000", "1234567", "18005551234"]
+    for digits in [*map(str, range(20_001)), *extra]:
+        theirs, _ = lexicon.get_number(digits, None, True, "")
+        words = spoken_number(digits).split()
+        ours = " ".join(lexicon.lookup(word, None, None, None)[0] for word in words)
+        assert ours == theirs, f"{len(digits)} digits"
+    assert en.PUNCT_TAGS == revoice.PUNCT_TAGS
 
 
 @pytest.mark.parametrize(

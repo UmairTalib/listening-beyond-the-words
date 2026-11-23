@@ -14,8 +14,13 @@ protocol, section "Clip versions", bullet "Re-voiced clip").
    a sound, and no part may hold a bracket, need two Kokoro calls (over 510 phoneme
    characters), use a sound outside Kokoro's vocabulary or have ( or ) in its phonemes.
    If a rule fails, the job stops before rendering and prints counts by text-free classes
-   of the words concerned (digit, apostrophe, capitals, one letter, part edge, tokens,
-   misaki's rating, spaCy tags), from which a general fix of the text mapping is chosen.
+   of the words concerned (digit, apostrophe, capitals, one letter, part edge, number,
+   tokens, misaki's rating, spaCy tags), from which a general fix of the text mapping is
+   chosen. The counts from the transcript (words, capitals, apostrophes, digits) are
+   taken on the words as written. Printed, never stop rules: the numbers written out in
+   words; in each part with one, a word-by-word comparison with the words as written,
+   numbers not written out (rule of 2026-11-23); and the words that keep a sound
+   although misaki read a piece of them as punctuation.
 3. Test render: 20 segments outside the word-check sample, drawn with seed 106, are
    rendered exactly as the build renders them (``revoice.render_segment``), and the first
    2 by ID once more in the same process; both renders must be identical. Prints the
@@ -55,7 +60,9 @@ from listening_beyond_words.models import load_pins
 from listening_beyond_words.revoice import (
     MAX_PHONEMES,
     TASKS,
+    FrontEnd,
     Kokoro,
+    PartText,
     RenderedSegment,
     WordPlaces,
     X1Inputs,
@@ -80,6 +87,7 @@ from listening_beyond_words.runinfo import (
     write_json,
 )
 from listening_beyond_words.settings import get_workspace
+from listening_beyond_words.transcripts import normalise
 from listening_beyond_words.views import PCM16_SCALE
 
 CONFIG = Path("configs/pilot/data.yaml")
@@ -104,13 +112,22 @@ PACKAGES = (
     "pyyaml",
 )
 YEAR = re.compile(r"(?<!\d)\d{4}(?!\d)")
+# Counts of the comparison with the words as written, per part (without_the_rule).
+CHANGED = (
+    "numbers_without_a_sound",
+    "numbers_with_a_sound_read_otherwise",
+    "other_words_read_otherwise",
+    "other_words_read_otherwise_same_tags",
+    "compared_prints",
+    "compared_warnings",
+)
 
 
 def classes_line(found: list[dict[str, Any]]) -> str:
     """Counts of text-free word classes, as one printed line."""
     counts: Counter[str] = Counter()
     for word in found:
-        for name in ("digit", "apostrophe", "capitals", "one_letter", "part_edge"):
+        for name in ("digit", "apostrophe", "capitals", "one_letter", "part_edge", "number"):
             counts[name] += bool(word[name])
         counts[f"{word['tokens']} token(s)"] += 1
         counts[f"rating {word['rating']}"] += 1
@@ -134,6 +151,41 @@ def check_words(inputs: X1Inputs, lines: dict[int, list[str]], state: Progress) 
     )
 
 
+def without_the_rule(kokoro: Kokoro, text: PartText, front: FrontEnd) -> dict[str, int]:
+    """Compare a part's words read with those as written, numbers not written out.
+
+    Counts only, word by word, against the rule of 2026-11-23. Numbers: those that would
+    have had no sound without the rule, and, apart from them, those that would have had a
+    sound but other phonemes (after an apostrophe, as in "'05", misaki reads digits by
+    another rule, or reads the apostrophe as a quotation mark). Other words whose phonemes the rule changed, and how many of them kept
+    their spaCy tags: spaCy may tag a word differently next to a number written out, and
+    misaki reads some words, such as "the" or "to", by the sound that follows them, which
+    a number without a sound did not give. Also the prints and warnings caught while the
+    front end read the words as written.
+    """
+    before = kokoro.front_end(text.written_text)
+    counts = dict.fromkeys(CHANGED, 0)
+    counts["compared_prints"], counts["compared_warnings"] = before.prints, before.warnings
+    k = 0
+    for i, count in enumerate(text.written_out):
+        if count:
+            silent = not before.words[i].voiced
+            spoken = " ".join(front.word_phonemes[k : k + count])
+            counts["numbers_without_a_sound"] += silent
+            counts["numbers_with_a_sound_read_otherwise"] += not silent and (
+                before.word_phonemes[i] != spoken
+            )
+            k += count
+        else:
+            changed = before.word_phonemes[i] != front.word_phonemes[k]
+            counts["other_words_read_otherwise"] += changed
+            counts["other_words_read_otherwise_same_tags"] += (
+                changed and before.words[i].tags == front.words[k].tags
+            )
+            k += 1
+    return counts
+
+
 def dry_run(
     kokoro: Kokoro,
     inputs: X1Inputs,
@@ -145,6 +197,7 @@ def dry_run(
     rows = []
     silent_classes: list[dict[str, Any]] = []
     bracket_classes: list[dict[str, Any]] = []
+    punctuation_classes: list[dict[str, Any]] = []
     outside: Counter[str] = Counter()
     edges: Counter[str] = Counter()
     for row in inputs.parts.itertuples(index=False):
@@ -153,18 +206,33 @@ def dry_run(
         state.segment, state.part = segment, int(row.position)
         text = part_text(lines[session][line], first, last)
         front = kokoro.front_end(text.text)
-        written = text.text.split()
+        written, read = text.written_text.split(), text.text.split()
         described = [
-            word_classes(word, edge=k in (0, len(written) - 1))
-            | {"tokens": sound.tokens, "rating": sound.rating, "tags": "+".join(sound.tags)}
-            for k, (word, sound) in enumerate(zip(written, front.words, strict=True))
+            word_classes(word, edge=k in (0, len(read) - 1))
+            | {
+                "number": number,
+                "tokens": sound.tokens,
+                "rating": sound.rating,
+                "tags": "+".join(sound.tags),
+            }
+            for k, (word, number, sound) in enumerate(
+                zip(read, text.in_number, front.words, strict=True)
+            )
         ]
+        as_written = [word_classes(word, edge=False) for word in written]
+        numbers = [w for w, count in zip(written, text.written_out, strict=True) if count]
         silent_classes += [d for d, s in zip(described, front.words, strict=True) if not s.voiced]
         bracket_classes += [
             d | {"espeak": s.espeak}
             for d, s in zip(described, front.words, strict=True)
             if s.brackets
         ]
+        punctuation_classes += [
+            d for d, s in zip(described, front.words, strict=True) if s.voiced and s.punctuation
+        ]
+        changed = (
+            without_the_rule(kokoro, text, front) if text.numbers else dict.fromkeys(CHANGED, 0)
+        )
         outside.update(front.outside)
         if text.split_start:
             edges[places.cause(session, segment, line, first, first - 1)] += 1
@@ -176,9 +244,16 @@ def dry_run(
                 "session": session,
                 "position": int(row.position),
                 "words": len(written),
+                "words_read": len(read),
+                "numbers": text.numbers,
+                "number_words": sum(text.written_out),
+                "numbers_as_years": sum(len(normalise(word)) == 4 for word in numbers),
+                "numbers_with_an_apostrophe": sum("'" in word for word in numbers),
                 "phoneme_chars": len(front.phonemes),
                 "silent": front.silent,
                 "espeak": sum(word.espeak for word in front.words),
+                "punctuation": sum(s.voiced and s.punctuation for s in front.words),
+                "lost_pieces": sum(s.voiced and s.lost_piece for s in front.words),
                 "bracket_phonemes": front.brackets,
                 "outside": list(front.outside),
                 "written": text.written,
@@ -187,15 +262,15 @@ def dry_run(
                 "split_end": text.split_end,
                 "typographic": text.typographic,
                 "bracket_tokens": text.brackets,
-                "capitals": sum(d["capitals"] for d in described),
-                "apostrophes": sum(d["apostrophe"] for d in described),
-                "digits": sum(d["digit"] for d in described),
+                "capitals": sum(c["capitals"] for c in as_written),
+                "apostrophes": sum(c["apostrophe"] for c in as_written),
+                "digits": sum(c["digit"] for c in as_written),
                 "years": sum(bool(YEAR.search(word)) for word in written),
+                "read_digits": sum(d["digit"] for d in described),
+                **changed,
                 "prints": front.prints,
                 "warnings": front.warnings,
-                "silent_words": [
-                    w for w, s in zip(written, front.words, strict=True) if not s.voiced
-                ],
+                "silent_words": [w for w, s in zip(read, front.words, strict=True) if not s.voiced],
             }
         )
     state.segment = state.part = None
@@ -219,6 +294,30 @@ def dry_run(
         "split_edges": dict(sorted(edges.items())),
         "prints_caught": int(table["prints"].sum()),
         "warnings_caught": int(table["warnings"].sum()),
+        "words_read": int(table["words_read"].sum()),
+        "numbers_written_out": int(table["numbers"].sum()),
+        "numbers_as_years": int(table["numbers_as_years"].sum()),
+        "numbers_with_an_apostrophe": int(table["numbers_with_an_apostrophe"].sum()),
+        "number_words": int(table["number_words"].sum()),
+        "words_read_with_a_digit": int(table["read_digits"].sum()),
+        "words_with_a_piece_read_as_punctuation": int(table["punctuation"].sum()),
+        "words_that_lost_a_piece": int(table["lost_pieces"].sum()),
+        "without_the_rule": {
+            "parts": int((table["numbers"] > 0).sum()),
+            "numbers_without_a_sound": int(table["numbers_without_a_sound"].sum()),
+            "numbers_with_a_sound_read_otherwise": int(
+                table["numbers_with_a_sound_read_otherwise"].sum()
+            ),
+            "other_words_read_otherwise": int(table["other_words_read_otherwise"].sum()),
+            "other_words_read_otherwise_same_tags": int(
+                table["other_words_read_otherwise_same_tags"].sum()
+            ),
+            "parts_with_other_words_read_otherwise": int(
+                (table["other_words_read_otherwise"] > 0).sum()
+            ),
+            "prints_caught": int(table["compared_prints"].sum()),
+            "warnings_caught": int(table["compared_warnings"].sum()),
+        },
     }
     stops = {
         "words_without_a_sound": int(table["silent"].sum()),
@@ -247,6 +346,29 @@ def dry_run(
         f" misaki prints caught {counts['prints_caught']:,}, warnings caught"
         f" {counts['warnings_caught']:,}"
     )
+    print(
+        f"numbers written out in words {counts['numbers_written_out']:,} (as years"
+        f" {counts['numbers_as_years']:,}; with an apostrophe"
+        f" {counts['numbers_with_an_apostrophe']:,}), read as {counts['number_words']:,} words;"
+        f" words read {counts['words_read']:,}, of which with a digit"
+        f" {counts['words_read_with_a_digit']:,}"
+    )
+    without = counts["without_the_rule"]
+    print(
+        f"without that rule, in the {without['parts']:,} parts with a number: numbers without a"
+        f" sound {without['numbers_without_a_sound']:,}; other numbers read otherwise"
+        f" {without['numbers_with_a_sound_read_otherwise']:,}; other words read otherwise"
+        f" {without['other_words_read_otherwise']:,} (of which with the same spaCy tags"
+        f" {without['other_words_read_otherwise_same_tags']:,}), in"
+        f" {without['parts_with_other_words_read_otherwise']:,} parts; misaki prints caught"
+        f" {without['prints_caught']:,}, warnings caught {without['warnings_caught']:,}"
+        " (counted, not a stop rule)"
+    )
+    print(
+        "words with a sound but a piece read as punctuation"
+        f" {counts['words_with_a_piece_read_as_punctuation']:,}, of which a letter or digit is"
+        f" not spoken {counts['words_that_lost_a_piece']:,} (counted, not a stop rule)"
+    )
     split = sum(edges.values())
     print(
         f"tokens split at a part edge: {split:,}"
@@ -264,6 +386,11 @@ def dry_run(
     )
     if silent_classes:
         print(f"words without a sound, by class: {classes_line(silent_classes)}")
+    if punctuation_classes:
+        print(
+            "words with a sound but a piece read as punctuation, by class:"
+            f" {classes_line(punctuation_classes)}"
+        )
     if bracket_classes:
         espeak = sum(word["espeak"] for word in bracket_classes)
         print(

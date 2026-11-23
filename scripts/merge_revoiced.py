@@ -11,6 +11,11 @@ Every check runs before anything is written, and a refused merge writes nothing:
   - the segments are exactly those of x0's pinned manifest, with as many parts each;
   - each participant has the voice that revoice.assign_voices gives them, and each part
     the seed runinfo.item_seed(106, segment, position);
+  - the tasks read as many words, with as many numbers written out, as the dry run of
+    their check run, whose run.json is unchanged since the build; both counts follow
+    from the pinned stored words and num2words, so this catches a num2words that writes
+    some number in another number of words, or counts edited in parts.parquet, not other
+    words of the same count, nor other capitals or marks;
   - every file is read again: its SHA-256 and samples match its task's manifest, and it
     passes views.check_segment_views with its own part bounds; no FLAC file anywhere in
     the run is missing from the tasks' manifests;
@@ -183,6 +188,20 @@ def merge(progress: Progress) -> None:
     ]
     if parts["seed"].astype(object).tolist() != seeds:
         raise StepError("a part does not have the seed of its segment and position")
+    check_json = workspace.root / shared["check_run"]["run"] / "run.json"
+    if sha256_file(check_json) != shared["check_run"]["run_json_sha256"]:
+        raise StepError("the check run's run.json changed after the build")
+    dry = json.loads(check_json.read_text(encoding="utf-8"))["dry_run"]
+    read = {
+        "words_read": int(parts["words_read"].sum()),
+        "numbers_written_out": int(parts["numbers"].sum()),
+    }
+    if any(read[name] != dry.get(name) for name in read):
+        raise StepError(
+            f"the tasks read {read['words_read']:,} words with {read['numbers_written_out']:,}"
+            f" numbers written out; the check run's dry run read {dry.get('words_read')} with"
+            f" {dry.get('numbers_written_out')}"
+        )
 
     files = set()
     for row in manifest.itertuples(index=False):
@@ -277,6 +296,8 @@ def summary(
             "max": float(gains.max()),
         },
         "storage_bytes": int(storage),
+        "words_read": int(parts["words_read"].sum()),
+        "numbers_written_out": int(parts["numbers"].sum()),
     }
     print(
         f"x1: {counts['files']:,} files from {counts['sessions']} sessions, {counts['parts']:,}"
@@ -288,6 +309,10 @@ def summary(
     print(
         f"x1 gain (dB): min {gains.min():+.2f}, median {np.median(gains):+.2f},"
         f" max {gains.max():+.2f}"
+    )
+    print(
+        f"text: {counts['words_read']:,} words read, {counts['numbers_written_out']:,} numbers"
+        " written out in words: the counts of the check run's dry run"
     )
     voice = parts.drop_duplicates("session").set_index("session")["voice"]
     table = labels.join(voice, how="inner").join(

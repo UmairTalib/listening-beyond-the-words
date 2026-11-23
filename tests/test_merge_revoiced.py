@@ -18,6 +18,7 @@ from listening_beyond_words.runinfo import item_seed, sha256_file
 from listening_beyond_words.settings import Workspace
 from x1_fakes import (
     ARRAY_JOB,
+    CHECK_JOB,
     SECRET,
     X1Workspace,
     build_all,
@@ -116,6 +117,13 @@ def test_the_merge_checks_every_task_and_file_and_writes_the_run_last(
     # Women 300 (negative), 304 (negative, no segments) and 302 (positive) take af_heart,
     # af_bella and af_heart; men 303 (negative) and 301 (positive) am_michael and am_fenrir.
     assert voices == {("female", "af_heart"), ("male", "am_michael"), ("male", "am_fenrir")}
+    dry = json.loads((check_run(workspace) / "run.json").read_text(encoding="utf-8"))["dry_run"]
+    assert info["counts"]["words_read"] == dry["words_read"] == parts["words_read"].sum()
+    assert info["counts"]["numbers_written_out"] == dry["numbers_written_out"] > 0
+    assert (
+        f"text: {dry['words_read']:,} words read, {dry['numbers_written_out']:,} numbers"
+        " written out in words: the counts of the check run's dry run"
+    ) in out
     assert SECRET.lower() not in outside_text(
         run / "run.json", run / "manifest.parquet", streams=out + err
     )
@@ -123,6 +131,10 @@ def test_the_merge_checks_every_task_and_file_and_writes_the_run_last(
     workspace.config["view_runs"]["x1"] = {"run": RUN, "sha256": info["output"]["sha256"]}
     pinned = load_view_manifest(Workspace(workspace.root), workspace.config, "x1")
     pd.testing.assert_frame_equal(pinned, manifest)
+
+
+def check_run(workspace: X1Workspace) -> Path:
+    return workspace.root / "derived" / "revoice_check" / f"run-{CHECK_JOB}"
 
 
 def refused(module: Any, workspace: X1Workspace, capsys: pytest.CaptureFixture[str]) -> str:
@@ -435,3 +447,27 @@ def test_a_merge_that_dies_while_writing_its_run_json_can_run_again(
     module.main()
     assert json.loads((run / "run.json").read_text(encoding="utf-8"))["status"] == "done"
     assert not (run / "run.json.tmp").exists()
+
+
+def test_the_merge_refuses_a_check_run_whose_run_json_changed_after_the_build(
+    merge: tuple[Any, X1Workspace], capsys: pytest.CaptureFixture[str]
+) -> None:
+    module, workspace = merge
+    path = check_run(workspace) / "run.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    info["dry_run"]["words_read"] += 1
+    path.write_text(json.dumps(info), encoding="utf-8")
+    assert "the check run's run.json changed after the build" in refused(module, workspace, capsys)
+
+
+@pytest.mark.parametrize("column", ["words_read", "numbers"])
+def test_the_merge_refuses_tasks_whose_counts_differ_from_the_dry_run(
+    merge: tuple[Any, X1Workspace], capsys: pytest.CaptureFixture[str], column: str
+) -> None:
+    module, workspace = merge
+    parts = pd.read_parquet(task_file(workspace, 0, "parts.parquet"))
+    parts.loc[0, column] += 1
+    rewrite(workspace, 0, "parts.parquet", parts)
+    out = refused(module, workspace, capsys)
+    assert "the tasks read" in out
+    assert "numbers written out; the check run's dry run read" in out

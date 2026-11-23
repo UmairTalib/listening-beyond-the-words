@@ -5,8 +5,10 @@ the settings are in ``configs/pilot/data.yaml`` (``views.x1``). x1 has the parts
 (``segments.segment_parts``), one Kokoro call per part:
 
 - Text: each part's words as the E-DAIC transcript writes them (``part_text``), so
-  that Kokoro pronounces them correctly, and turning the text back into stored words
-  gives exactly the part's words.
+  that Kokoro pronounces them correctly, and turning that text back into stored words
+  gives exactly the part's words. Then each word whose stored form is made only of
+  digits is written out in words, by its value (``spoken_number``; added on 2026-11-23),
+  so that a punctuation tag from spaCy cannot leave it silent.
 - Voices: within each gender, participants alternate between two voices along their
   order by PHQ-8 class and ID (``assign_voices``), so that the voice is balanced
   against the label.
@@ -35,6 +37,7 @@ from typing import Any, Final, Protocol, cast
 import numpy as np
 import pandas as pd
 import soxr
+from num2words import num2words
 
 from listening_beyond_words.clips import (
     load_cut_words,
@@ -74,12 +77,17 @@ BRACKETS: Final = frozenset("<>[](){}")
 # length marks, modifiers and intonation arrows. A word needs another one to be heard.
 NOT_SOUNDS: Final = frozenset(';:,.!?—…"“”()' + "ˈˌː" + "ʰʲ\u0303" + "↓→↗↘")
 ESPEAK_RATING: Final = 2  # misaki's rating of a word whose sounds come from espeak
+# The spaCy tags that misaki 0.9.4 reads as punctuation (misaki.en.PUNCT_TAGS; a slow
+# test compares them on OMNI): a token with one of them that is not all letters a-z gets
+# only its punctuation marks as phonemes, so a token of x1's text gets no sound at all.
+PUNCT_TAGS: Final = frozenset({".", ",", "-LRB-", "-RRB-", "``", '""', "''", ":", "$", "#", "NFP"})
 INVENTED_WORD: Final = "zorblefax"  # public, in no lexicon: only espeak can give it sounds
 WEIGHTS_FILE: Final = "kokoro-v1_0.pth"
 SESSIONS_CHECKSUMS: Final = "manifest/sessions_sha256.txt"  # in edaic/, by unpack_edaic_pilot.sh
 
 _NOT_WRITTEN: Final = re.compile(r"[^A-Za-z0-9']+")
 _SPOKEN: Final = re.compile(r"[A-Za-z0-9]")
+_NOT_LOWER: Final = re.compile(r"[^a-z]+")  # where misaki splits num2words' words
 _VOICE_NAME: Final = re.compile(r"[a-z]{2}_[a-z]+")
 
 
@@ -91,7 +99,8 @@ def written_form(token: str) -> str:
 
     A typographic apostrophe becomes a plain one; every other character that is not an
     ASCII letter, digit or apostrophe becomes a space; and pieces without a letter or
-    digit are dropped. Capitals stay, and Kokoro reads digits itself.
+    digit are dropped. Capitals and digits stay; ``part_text`` then writes out each word
+    whose stored form is made only of digits.
 
     Args:
         token: A run of characters between white space in a transcript line.
@@ -103,12 +112,56 @@ def written_form(token: str) -> str:
     return " ".join(piece for piece in pieces if _SPOKEN.search(piece))
 
 
+def spoken_number(digits: str) -> str:
+    """Write out digits in words by their value, as misaki 0.9.4 reads them as a number on their own.
+
+    misaki's ``Lexicon.get_number`` reads a token made only of digits that starts its word
+    (no currency, suffix or markup) with num2words: as a year if it has exactly four
+    characters, otherwise as a whole number. It splits the result wherever there is no
+    lower-case letter and drops "and". So "1990" gives "nineteen ninety", "125" "one
+    hundred twenty five", "007" "seven" and "00" "zero": a number is read by its value,
+    without leading zeros. After an apostrophe in the same word, as in "'05", misaki itself
+    reads the digits by another rule, one by one or in pairs ("zero five"); x1 reads them
+    by their value all the same (pilot protocol, bullet "Re-voiced clip").
+
+    Args:
+        digits: A word of ASCII digits.
+
+    Returns:
+        The words, joined by single spaces.
+
+    Raises:
+        ValueError: If ``digits`` is not a run of ASCII digits, or num2words cannot write
+            it out. The message never holds the number, and no other error is chained to it.
+    """
+    if not (digits.isascii() and digits.isdigit()):
+        raise ValueError("only a word of ASCII digits is written out")
+    reading = "year" if len(digits) == 4 else "cardinal"
+    spelled: str | None
+    try:
+        spelled = str(num2words(int(digits), to=reading))
+    except Exception:  # num2words' own messages hold the number
+        spelled = None
+    if spelled is None:  # raised outside the except clause, so that nothing chains to it
+        raise ValueError("num2words could not write out a number")
+    words = [word for word in _NOT_LOWER.split(spelled) if word and word != "and"]
+    if not words:
+        raise ValueError("num2words gave no words for a number")
+    return " ".join(words)
+
+
 @dataclass(frozen=True, slots=True)
 class PartText:
     """The text that Kokoro reads for one part, and how it was made.
 
     Attributes:
-        text: The words to read, joined by single spaces.
+        text: The words to read, joined by single spaces: ``written_text`` with each word
+            whose stored form is made only of digits written out in words
+            (``spoken_number``).
+        written_text: The words as written, before any number is written out. Turning it
+            back into stored words gives exactly the part's words.
+        written_out: For each word of ``written_text``, how many words of ``text`` it was
+            written out as; 0 for a word read as written.
         written: Transcript tokens read as written.
         unmatched: Tokens read as their stored words, because their written form does
             not turn back into exactly those words.
@@ -120,12 +173,26 @@ class PartText:
     """
 
     text: str
+    written_text: str
+    written_out: tuple[int, ...]
     written: int
     unmatched: int
     split_start: bool
     split_end: bool
     typographic: int
     brackets: int
+
+    @property
+    def numbers(self) -> int:
+        """Words of ``written_text`` written out in words."""
+        return sum(count > 0 for count in self.written_out)
+
+    @property
+    def in_number(self) -> tuple[bool, ...]:
+        """For each word of ``text``, whether it comes from a number written out."""
+        return tuple(
+            flag for count in self.written_out for flag in ([True] * count if count else [False])
+        )
 
 
 def part_text(line: str, first: int, last: int) -> PartText:
@@ -136,7 +203,9 @@ def part_text(line: str, first: int, last: int) -> PartText:
     which the word indices count. A token whose stored words touch the part gives its
     written form (``written_form``) if all its stored words lie in the part and its
     written form turns back into exactly them; otherwise it gives its stored words that
-    lie in the part.
+    lie in the part. These words as written must turn back into exactly the part's stored
+    words. Then each of them whose stored form is made only of ASCII digits, such as
+    "1990", "30" of "9:30" or "'90", is written out in words (``spoken_number``).
 
     Args:
         line: The text of one transcript line.
@@ -147,8 +216,8 @@ def part_text(line: str, first: int, last: int) -> PartText:
         The text and how it was made.
 
     Raises:
-        ValueError: If the indices do not lie in the line, or the text does not turn back
-            into exactly the part's stored words.
+        ValueError: If the indices do not lie in the line, or the words as written do not
+            turn back into exactly the part's stored words.
     """
     if not 0 <= first <= last:
         raise ValueError(f"a part cannot run from word {first} to word {last}")
@@ -178,11 +247,24 @@ def part_text(line: str, first: int, last: int) -> PartText:
             words.extend(stored[max(first, start) - start : min(last + 1, stop) - start])
     if last >= position:
         raise ValueError(f"a part ends at word {last}, but its line has {position} words")
-    text = " ".join(words)
-    if normalise(text).split() != normalise(line).split()[first : last + 1]:
+    written_text = " ".join(words)
+    if normalise(written_text).split() != normalise(line).split()[first : last + 1]:
         raise ValueError("the text of a part does not give back its stored words")
+    read: list[str] = []
+    written_out: list[int] = []
+    for word in written_text.split():
+        as_stored = normalise(word)  # one stored word: a word as written has a letter or digit
+        if as_stored.isascii() and as_stored.isdigit():
+            spelled = spoken_number(as_stored).split()
+            read.extend(spelled)
+            written_out.append(len(spelled))
+        else:
+            read.append(word)
+            written_out.append(0)
     return PartText(
-        text=text,
+        text=" ".join(read),
+        written_text=written_text,
+        written_out=tuple(written_out),
         written=written,
         unmatched=unmatched,
         split_start=split_start,
@@ -773,8 +855,8 @@ class RenderedSegment:
         gain: The gain applied to the joined parts.
         peak_limited: Whether the peak guard scaled the clip down.
         renders: Kokoro's render of each part at 24 kHz, for the repeat check.
-        parts: One record per part, for ``parts.parquet``; it holds the text and the
-            phonemes, so it stays on OMNI.
+        parts: One record per part, for ``parts.parquet``; it holds the text read, the
+            words as written and the phonemes, so it stays on OMNI.
     """
 
     samples: np.ndarray
@@ -864,8 +946,11 @@ def render_segment(
                 "voice": voice,
                 "seed": seed,
                 "text": text.text,
+                "written_text": text.written_text,
                 "phonemes": render.phonemes,
                 "words_read": len(text.text.split()),
+                "numbers": text.numbers,
+                "number_words": sum(text.written_out),
                 "phoneme_chars": len(render.phonemes),
                 "written": text.written,
                 "unmatched": text.unmatched,
@@ -920,6 +1005,29 @@ def word_has_sound(phonemes: str, vocabulary: Collection[str]) -> bool:
     )
 
 
+def read_as_punctuation(token: Any, vocabulary: Collection[str]) -> bool:
+    """Return whether misaki 0.9.4 read a token as punctuation, which leaves it without a sound.
+
+    ``G2P.retokenize`` gives a token whose spaCy tag is in ``PUNCT_TAGS`` and whose text
+    is not all letters a-z only the punctuation marks of its text as phonemes, or a
+    bracket or quote mark for some tags, and its lexicon never reads it. The text that x1
+    reads has no punctuation marks, so such a token has no sound: spaCy took a number, an
+    apostrophe or a piece of a contraction for punctuation.
+
+    Args:
+        token: A token of misaki's ``G2P``.
+        vocabulary: The phoneme characters of Kokoro's ``config.json``.
+
+    Returns:
+        True if the token was read as punctuation.
+    """
+    return (
+        str(token.tag) in PUNCT_TAGS
+        and not all(character.isascii() and character.isalpha() for character in str(token.text))
+        and not word_has_sound(token.phonemes or "", vocabulary)
+    )
+
+
 def token_ratings(token: Any) -> tuple[int | None, int | None]:
     """Return the rating misaki gave one token, from both places where misaki 0.9.4 keeps it.
 
@@ -940,7 +1048,7 @@ def token_ratings(token: Any) -> tuple[int | None, int | None]:
 
 @dataclass(frozen=True, slots=True)
 class WordSound:
-    """How Kokoro's front end read one written word; it holds no text.
+    """How Kokoro's front end read one word of a text; it holds no text.
 
     Attributes:
         voiced: Whether the word has a sound (``word_has_sound``).
@@ -949,6 +1057,10 @@ class WordSound:
         tokens: How many of misaki's tokens it became.
         rating: misaki's lowest rating among its tokens; None if it gave none.
         tags: The spaCy tags of its tokens.
+        punctuation: Whether misaki read one of its tokens as punctuation
+            (``read_as_punctuation``), so that the token has no sound.
+        lost_piece: Whether such a token holds a letter or digit, which is then not
+            spoken; "90" of "90s", for example.
     """
 
     voiced: bool
@@ -957,15 +1069,20 @@ class WordSound:
     tokens: int
     rating: int | None
     tags: tuple[str, ...]
+    punctuation: bool
+    lost_piece: bool
 
 
 @dataclass(frozen=True, slots=True)
 class FrontEnd:
-    """What Kokoro's text front end makes of one part's text; only ``phonemes`` holds speech.
+    """What Kokoro's text front end makes of one part's text.
+
+    Only ``phonemes`` and ``word_phonemes`` hold speech.
 
     Attributes:
         phonemes: The phonemes Kokoro reads, as its pipeline joins them.
-        words: How each written word was read, in order.
+        words: How each word of the text was read, in order.
+        word_phonemes: The phonemes of each word, its tokens' joined.
         outside: Phoneme characters outside Kokoro's vocabulary, as code points (U+XXXX).
         prints: Lines that misaki printed, caught and never shown.
         warnings: Warnings caught while it ran.
@@ -973,13 +1090,14 @@ class FrontEnd:
 
     phonemes: str
     words: tuple[WordSound, ...]
+    word_phonemes: tuple[str, ...]
     outside: tuple[str, ...]
     prints: int
     warnings: int
 
     @property
     def silent(self) -> int:
-        """Written words without a sound."""
+        """Words without a sound."""
         return sum(not word.voiced for word in self.words)
 
     @property
@@ -1035,13 +1153,13 @@ def caught_output() -> Iterator[Caught]:
 
 
 def group_words(tokens: Sequence[Any]) -> list[list[Any]]:
-    """Group misaki's tokens into written words: a word ends at a token with white space after it.
+    """Group misaki's tokens into words: a word ends at a token with white space after it.
 
     Args:
         tokens: The tokens of one text, in order.
 
     Returns:
-        The tokens of each written word, in order.
+        The tokens of each word, in order.
     """
     groups: list[list[Any]] = []
     current: list[Any] = []
@@ -1200,14 +1318,15 @@ class Kokoro:
         """Run Kokoro's text front end on one part's text, without audio.
 
         Args:
-            text: A part's text from ``part_text``: words joined by single spaces.
+            text: A part's text from ``part_text`` (the text read, or for a comparison the
+                words as written): words joined by single spaces.
 
         Returns:
             What the front end made of it. Prints and warnings are caught and counted.
 
         Raises:
-            ValueError: If the front end's tokens do not form exactly one group per
-                written word.
+            ValueError: If the front end's tokens do not form exactly one group per word
+                of the text.
         """
         written = text.split()
         with caught_output() as caught:
@@ -1222,10 +1341,12 @@ class Kokoro:
             (token.phonemes or "") + (" " if token.whitespace else "") for token in tokens
         ).strip()
         words = []
+        word_phonemes = []
         for group in groups:
             sounds = "".join(token.phonemes or "" for token in group)
             ratings = [rating for token in group for rating in token_ratings(token)]
             known = [rating for rating in ratings if rating is not None]
+            pieces = [token for token in group if read_as_punctuation(token, self.vocabulary)]
             words.append(
                 WordSound(
                     voiced=word_has_sound(sounds, self.vocabulary),
@@ -1234,8 +1355,11 @@ class Kokoro:
                     tokens=len(group),
                     rating=min(known) if known else None,
                     tags=tuple(str(token.tag) for token in group),
+                    punctuation=bool(pieces),
+                    lost_piece=any(_SPOKEN.search(str(token.text)) for token in pieces),
                 )
             )
+            word_phonemes.append(sounds)
         outside = sorted(
             f"U+{ord(character):04X}"
             for character in set(phonemes)
@@ -1244,6 +1368,7 @@ class Kokoro:
         return FrontEnd(
             phonemes=phonemes,
             words=tuple(words),
+            word_phonemes=tuple(word_phonemes),
             outside=tuple(outside),
             prints=caught.prints,
             warnings=caught.warnings,

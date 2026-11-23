@@ -12,8 +12,9 @@ section "Clip versions", bullet "Re-voiced clip"), and writes into
 $LBW_WORKSPACE/views/x1/run-<array job id>/:
   <session>/<segment>.flac    the clip as 16 kHz mono 16-bit FLAC, read back after writing
   tasks/<t>/manifest.parquet  one row per clip of the task (clips.MANIFEST_COLUMNS)
-  tasks/<t>/parts.parquet     one row per part: voice, seed, the text read, its phonemes and
-                              how the render was trimmed
+  tasks/<t>/parts.parquet     one row per part: voice, seed, the text read (numbers
+                              written out in words), the words as written, its phonemes
+                              and how the render was trimmed
   tasks/<t>/errors.log        if the task fails: traceback frames and error types only (a
                               task that fails before this folder exists prints them to
                               stderr)
@@ -235,6 +236,8 @@ def build(progress: Progress) -> None:
         "segments": len(manifest),
         "parts": len(records),
         "words": words,
+        "words_read": sum(int(record["words_read"]) for record in records),
+        "numbers_written_out": sum(int(record["numbers"]) for record in records),
         "hours": seconds / 3600,
         "peak_limited": sum(bool(row["peak_limited"]) for row in manifest),
         "load_seconds": round(load_seconds, 1),
@@ -252,7 +255,8 @@ def build(progress: Progress) -> None:
     write_json(task_dir / "run.json", info)
     print(
         f"task {task} of {TASKS}: {counts['sessions']} sessions, {counts['segments']:,} segments,"
-        f" {counts['parts']:,} parts, {counts['hours']:.2f} h of audio; peak-limited"
+        f" {counts['parts']:,} parts, {counts['numbers_written_out']:,} numbers written out,"
+        f" {counts['hours']:.2f} h of audio; peak-limited"
         f" {counts['peak_limited']}; Kokoro loaded in {load_seconds:.0f} s, rendered in"
         f" {render_seconds / 60:.1f} min"
     )
