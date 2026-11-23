@@ -76,8 +76,8 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
   - `cpu` on the Mac and in CI;
   - `cu126` on OMNI. It is the last CUDA build of PyTorch with V100 (sm_70) kernels. The PyPI build of the same version has none.
 - The `pipeline` extra adds the tools for clip building, the word check and the probe (Kokoro, faster-whisper, opensmile, Parselmouth). Only OMNI needs it. opensmile's licence allows research use, not commercial use.
-- jiwer, which computes the word error rate, is in the main set, so that the word-check tests run on the Mac and in CI.
-- `pyproject.toml` pins exact versions of the packages that can change the numbers: torch, torchaudio, transformers, peft and mistral-common, and the pipeline tools kokoro, misaki, faster-whisper, opensmile and en-core-web-sm. Ruff is pinned to match its git hook. The rest have lower bounds, and `uv.lock` pins them.
+- jiwer, which computes the word error rate, and num2words, which writes out the numbers in the text of the re-voiced clip as misaki does, are in the main set, so that their tests run on the Mac and in CI.
+- `pyproject.toml` pins exact versions of the packages that can change the numbers: torch, torchaudio, transformers, peft, mistral-common and num2words, and the pipeline tools kokoro, misaki, faster-whisper, opensmile and en-core-web-sm. Ruff is pinned to match its git hook. The rest have lower bounds, and `uv.lock` pins them.
 - Add a dependency with `uv add --no-sync <package>`, then run `make env`. Upgrade a package on purpose with `uv lock --upgrade-package <package>`, in its own `build(deps)` commit. No upgrades between the settings freeze and the pilot report.
 - In VS Code, use the Ruff, Python and EditorConfig extensions, and select `.venv` as the interpreter.
 
