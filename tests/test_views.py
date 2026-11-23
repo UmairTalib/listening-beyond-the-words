@@ -739,13 +739,15 @@ def test_data_config_pins_the_view_and_sample_settings() -> None:
 def test_data_config_pins_each_built_view_and_the_sample_by_a_file_hash() -> None:
     config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     runs = config["view_runs"]
-    assert set(runs) == {"x0", "x2", "rev"}
+    assert set(runs) == {"x0", "x1", "x2", "rev"}
     for view, pin in runs.items():
         assert set(pin) == {"run", "sha256"}
         assert pin["run"].startswith(f"views/{view}/run-")
         assert len(pin["sha256"]) == 64
         assert set(pin["sha256"]) <= set("0123456789abcdef")
-    assert len({pin["run"].rsplit("-", 1)[1] for pin in runs.values()}) == 1  # one build job
+    jobs = {view: pin["run"].rsplit("-", 1)[1] for view, pin in runs.items()}
+    assert len({jobs["x0"], jobs["x2"], jobs["rev"]}) == 1  # one build job (build_views)
+    assert jobs["x1"] != jobs["x0"]  # its own build (build_revoiced and its merge)
     sample = config["wordcheck_sample"]
     assert sample["run"].startswith("derived/wordcheck_sample/run-")
     assert len(sample["sha256"]) == 64

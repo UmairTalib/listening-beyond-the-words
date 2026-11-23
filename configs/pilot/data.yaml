@@ -67,10 +67,13 @@ wordcheck_sample: # the segments that the word check transcribes, drawn 2026-11-
   run: derived/wordcheck_sample/run-20261122T042544Z # written by scripts/draw_wordcheck_sample.py
   sha256: 83b977b365f9286848ceeb8d3164eacbf977a726e74e1b34ff5e569f1498e6cd # of its sample.parquet
 
-view_runs: # the clip versions of all 5,883 segments, built by scripts/build_views.py, job 12557091 (2026-11-22)
+view_runs: # the clip versions of all 5,883 segments: x0, x2 and rev built by scripts/build_views.py, job 12557091 (2026-11-22); x1 by scripts/build_revoiced.py, array job 12576406 after check job 12576253, merged by scripts/merge_revoiced.py (2026-11-23)
   x0:
     run: views/x0/run-12557091
     sha256: 793cbc044141ca1a51f9286db9ce45c44b97270fbe35768dd240b330201bf413 # of its manifest.parquet
+  x1:
+    run: views/x1/run-12576406
+    sha256: 3545bf20a4c01a995c5aaa1de520ec1891abcff2386d3d1d4132cfe5b570cbad # of its manifest.parquet
   x2:
     run: views/x2/run-12557091
     sha256: fcfa89b561d1bdbf774a798755482eb67c85b2c91a32ecaff8a6701abc6d9057 # of its manifest.parquet
