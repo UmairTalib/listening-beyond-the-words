@@ -18,6 +18,9 @@ dependencies = [
     "mistral-common[audio]==1.13.1",
     "peft==0.21.2",
     "transformers==5.22.2",
+    # Text of the re-voiced clip x1: misaki 0.9.4 reads numbers with num2words, and x1
+    # writes them out with the same version; in the main set so its tests run in CI.
+    "num2words==0.5.14",
     # Data, audio and statistics: lower bounds here, exact versions in uv.lock.
     "huggingface-hub>=1.31",
     "jiwer>=4.0",  # word error rate; in the main set so the word-check tests run on the Mac and in CI
