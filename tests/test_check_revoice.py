@@ -541,6 +541,7 @@ def test_a_failure_before_the_run_folder_exists_prints_frames_but_no_message(
         ("check_revoice", "SLURM_JOB_ID"),
         ("build_revoiced", "SLURM_ARRAY_TASK_ID"),
         ("merge_revoiced", None),
+        ("check_views", "SLURM_JOB_ID"),  # the word check reads participant text too
     ],
 )
 def test_every_x1_script_reports_a_failure_without_chaining_it_even_if_printing_fails(

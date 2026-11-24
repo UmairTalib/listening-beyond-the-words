@@ -53,7 +53,10 @@ views.py         the clip versions: x0, x2 and rev, their levels and 16-bit samp
 revoice.py       the re-voiced clip x1: its text, voices and audio, and the Kokoro wrapper
 clips.py         the files around the clips: recordings, transcript lines, pinned inputs,
                  listening keys, FLAC
-wordcheck.py     the word check (check F4 and the checks of x1)
+wordcheck.py     the word check (check F4 and the checks of x1): its sample, the text rule
+                 and WER, the leakage classifiers and their interval, and the verdicts
+voicecheck.py    the voice checks of x1: voice measures per part, ICC and voice probe
+recognisers.py   the word check's two ASR systems, faster-whisper and wav2vec2
 models.py        pinned model revisions and the check of loaded weights
 voxtral.py       Voxtral loading, prompt and score
 espeak.py        the workspace espeak-ng for Kokoro's text front end
@@ -63,6 +66,10 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - Each pipeline step is one script in `scripts/`, named after what it does: `build_segments.py`, `build_views.py`, `draw_wordcheck_sample.py`. A step reads `configs/pilot/data.yaml`, calls the library, writes a new folder in the workspace named after what it holds (`derived/segments/run-<UTC time>/`, `views/<view>/run-<job id>/`) and leaves a `run.json` there (section 8). It prints aggregate numbers only.
 - A step that needs a GPU, or that runs for more than a few minutes on a CPU, also has a job file of the same name, `scripts/slurm/<step>.sbatch`, with the job name `lbw-<step>` in hyphens (`lbw-build-views`). Shorter steps run on a login node; their docstring says so.
 - The re-voiced clip `x1` takes three steps. `check_revoice.py` (a job) runs the dry run of Kokoro's text front end and the test render, whose clips the researcher hears. `build_revoiced.py` (an array job of 20 tasks, all at once) writes the clips into `views/x1/run-<array job id>/<session>/` and each task's records into `tasks/<t>/` there. `merge_revoiced.py` (on a login node) checks every task and file and only then writes the run's `manifest.parquet`, `parts.parquet` and, last, its `run.json`, so a run folder with `run.json` is merged. Unlike other steps (section 8), the merge writes `run.json` only at the end, and a refused merge writes nothing. If any task fails, nothing is merged, and the whole array runs again into a new run folder; the merge refuses task folders from another array job.
+- The word check is one GPU job, `check_views.py` (job file `scripts/slurm/check_views.sbatch`, job name `lbw-check-views`), which writes `derived/wordcheck/run-<job id>/`. Its `transcripts.parquet` holds the ASR systems' text, and its other tables hold numbers per segment and per participant; only the researcher opens them, on OMNI. The script is not called `wordcheck.py`, because the tests of that module are `tests/test_wordcheck.py`, which a script of that name would claim too (section 10). It has three modes, whose options name a pinned view or an earlier run, never a setting (section 5):
+  - by default, it reads the pinned word-check sample in the views of `word_check.transcribed_views`;
+  - `--views <view> ...` reads only the named pinned views on the sample, under the rules of check F4, for the backup of F4. It needs the word check's own run pinned (`wordcheck_run`) and made from the same pinned inputs. Once a leakage rerun of that run is pinned (`leakage_rerun`), it reads their leakage on all segments, as the rerun read that of `rev`; while a rerun that the run's `x0` control called for is not pinned, it refuses to run;
+  - `--rerun derived/wordcheck/run-<job id>` runs the leakage part again on all segments of `x0` and `rev`, as the `x0` control may ask. It refuses a first run that is not done, that comes from another commit, config or inputs, whose `x0` control did not ask for the rerun, or whose `transcripts.parquet` no longer matches its `run.json`.
 - Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
@@ -295,7 +302,7 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, and the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, and those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`.
 - Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.
