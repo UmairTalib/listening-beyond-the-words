@@ -2,9 +2,10 @@
 
 The clip code itself (``views.py``) takes arrays. These few functions read and write
 the files around it on OMNI: a session's recording and transcript lines (through the
-guard in ``sessions.py``), the pinned segments, cut words, labels, word-check sample and
-view manifests, the key of a listening check and the FLAC file of a view. They also
-make the listening copy of a clip, scaled to a common loudness, exactly as the
+guard in ``sessions.py``), the pinned segments, cut words, labels, partitions,
+word-check sample and view manifests, the key of a listening check and the FLAC files
+of a view, which are read back only after a check against their manifest row. They
+also make the listening copy of a clip, scaled to a common loudness, exactly as the
 listening checks wrote it.
 """
 
@@ -12,6 +13,7 @@ import hashlib
 import io
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -19,14 +21,24 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 
-from listening_beyond_words.runinfo import check_sha256, sha256_file
+from listening_beyond_words.partitions import N_FOLDS, SEEDS
+from listening_beyond_words.runinfo import StepError, check_sha256, sha256_file
+from listening_beyond_words.segments import GAP_SECONDS
 from listening_beyond_words.sessions import session_files
 from listening_beyond_words.settings import Workspace
 from listening_beyond_words.transcripts import read_transcript
-from listening_beyond_words.views import PCM16_SCALE, SAMPLING_RATE, Window, clip_peak, clip_rms
+from listening_beyond_words.views import (
+    PCM16_SCALE,
+    SAMPLING_RATE,
+    Window,
+    check_segment_views,
+    clip_peak,
+    clip_rms,
+)
 
 LISTENING_RMS: Final = 0.1  # common loudness of the listening copies (-20 dBFS) ...
 LISTENING_PEAK: Final = 0.99  # ... unless that would clip; x0 itself keeps the recording's level
+GAP_SAMPLES: Final = round(GAP_SECONDS * SAMPLING_RATE)  # the 300 ms of silence between two parts
 # One row per stored clip of a view, in manifest.parquet. ``file`` is relative to the run
 # folder; ``rms`` and ``peak`` are measured on the stored samples; a part runs from its
 # start sample up to, not including, its end sample.
@@ -179,6 +191,60 @@ def load_pinned_sample(workspace: Workspace, config: dict) -> pd.DataFrame:
     return pd.read_parquet(_pinned_file(workspace, config["wordcheck_sample"], "sample.parquet"))
 
 
+def load_pinned_partitions(workspace: Workspace, config: dict) -> pd.DataFrame:
+    """The pinned partitions: the fold of each labelled participant in each round.
+
+    The pin covers ``partitions.parquet``. Its run's ``run.json`` must name the pinned
+    labels' SHA-256 as its input (as ``load_segments`` checks its inputs), the file must
+    hold the rounds of ``partitions.SEEDS`` and in each round the folds 1 to
+    ``partitions.N_FOLDS``, and each participant of the pinned labels must lie in
+    exactly one fold of each round, with no other participant.
+
+    Args:
+        workspace: The workspace.
+        config: The data config, with the ``partitions`` and ``labels`` pins.
+
+    Returns:
+        One row per participant and round, with the columns ``session``, ``round`` (1 for
+        seed 101, 2 for seed 102) and ``fold`` (from 1), sorted by round and session.
+
+    Raises:
+        ValueError: If a file does not match its SHA-256, the partitions were made from
+            other labels, a round or a fold is missing or extra, or a labelled
+            participant is missing from a round or lies in it twice, or one without a
+            label lies in it.
+    """
+    path = _pinned_file(workspace, config["partitions"], "partitions.parquet")
+    built = json.loads((path.parent / "run.json").read_text(encoding="utf-8"))
+    named = ((built.get("inputs") or {}).get("labels") or {}).get("sha256")
+    if named != config["labels"]["sha256"]:
+        raise ValueError("the pinned partitions were not made from the pinned labels")
+    table = pd.read_parquet(path)
+    columns = ["session", "round", "fold"]
+    if not set(columns) <= set(table.columns):
+        raise ValueError("the pinned partitions do not have the columns session, round and fold")
+    rounds = set(range(1, len(SEEDS) + 1))
+    found = {int(number) for number in table["round"]}
+    if found != rounds:
+        raise ValueError(f"the pinned partitions hold rounds {sorted(found)}, not {sorted(rounds)}")
+    labelled = {int(session) for session in load_pinned_labels(workspace, config).index}
+    for number, part in table.groupby("round", sort=True):
+        sessions = [int(session) for session in part["session"]]
+        missing = len(labelled - set(sessions))
+        twice = len(sessions) - len(set(sessions))
+        unlabelled = len(set(sessions) - labelled)
+        if missing or twice or unlabelled:
+            raise ValueError(
+                f"round {number}: {missing} labelled participants missing, {twice} extra rows"
+                f" of participants already in it, {unlabelled} participants without a label;"
+                " each labelled participant must lie in exactly one fold"
+            )
+        folds = {int(fold) for fold in part["fold"]}
+        if folds != set(range(1, N_FOLDS + 1)):
+            raise ValueError(f"round {number} holds folds {sorted(folds)}, not 1 to {N_FOLDS}")
+    return table[columns].sort_values(["round", "session"], ignore_index=True)
+
+
 def load_view_manifest(workspace: Workspace, config: dict, view: str) -> pd.DataFrame:
     """The manifest of a pinned clip version (``view_runs``).
 
@@ -316,3 +382,77 @@ def write_view(path: Path, samples: np.ndarray, rate: int = SAMPLING_RATE) -> di
         "sha256": sha256_file(path),
         "audio_sha256": audio_sha256(samples),
     }
+
+
+@dataclass(frozen=True, slots=True)
+class ViewClip:
+    """One stored clip of a view, read back and checked against its manifest row.
+
+    Attributes:
+        samples: The stored 16-bit samples, int16 of shape (samples,).
+        part_starts: The first sample of each part.
+        part_ends: The sample just after each part.
+    """
+
+    samples: np.ndarray
+    part_starts: tuple[int, ...]
+    part_ends: tuple[int, ...]
+
+    @property
+    def audio(self) -> np.ndarray:
+        """The clip as both speech recognisers read it: float32, each sample n as n / 32768."""
+        return (self.samples / PCM16_SCALE).astype(np.float32)
+
+
+def read_view_clip(run_dir: Path, row: Any) -> ViewClip:
+    """Read one stored clip of a view, after checking it against its manifest row.
+
+    The checks are those with which the merge of x1 reads its files again
+    (``scripts/merge_revoiced.py``): the file's SHA-256; 16 kHz, mono, 16-bit; the
+    number of samples and their SHA-256; then ``views.check_segment_views`` on the
+    clip's own part bounds, so that every gap is silent and every part starts and ends
+    at exactly 0.
+
+    Args:
+        run_dir: The view's run folder, such as ``<workspace>/views/x1/run-12576406``.
+        row: One row of its manifest (``MANIFEST_COLUMNS``), such as from
+            ``manifest.itertuples(index=False)``; its fields are read by name.
+
+    Returns:
+        The stored samples and the part bounds.
+
+    Raises:
+        StepError: If the file is missing or any check fails. The message names the
+            segment and the check, never a path or a sample value.
+    """
+    segment = str(row.segment)
+
+    def refused(what: str) -> StepError:
+        return StepError(f"segment {segment}: {what}", segment=segment)
+
+    path = run_dir / str(row.file)
+    if not path.is_file():
+        raise refused("its file is missing")
+    if sha256_file(path) != row.sha256:
+        raise refused("its file does not match the SHA-256 of its manifest row")
+    info = sf.info(path)
+    if (info.samplerate, info.channels, info.subtype) != (SAMPLING_RATE, 1, "PCM_16"):
+        raise refused(
+            f"its file is {info.samplerate} Hz, {info.channels} channel(s), {info.subtype};"
+            f" expected {SAMPLING_RATE} Hz mono 16-bit PCM"
+        )
+    samples, _ = sf.read(path, dtype="int16")
+    if len(samples) != int(row.samples):
+        raise refused(f"its file holds {len(samples)} samples, its manifest row {int(row.samples)}")
+    if audio_sha256(samples) != row.audio_sha256:
+        raise refused("its samples do not match the SHA-256 of its manifest row")
+    starts = tuple(int(start) for start in row.part_starts)
+    ends = tuple(int(end) for end in row.part_ends)
+    reason = None
+    try:
+        check_segment_views({"clip": samples}, starts, ends, gap=GAP_SAMPLES)
+    except ValueError as error:  # its messages name rules and sample counts only
+        reason = str(error)
+    if reason is not None:  # raised here, so that nothing chains to the check's error
+        raise refused(f"its parts and gaps do not fit its manifest row ({reason})")
+    return ViewClip(np.asarray(samples, dtype=np.int16), starts, ends)
