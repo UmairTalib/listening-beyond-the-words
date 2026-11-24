@@ -139,6 +139,10 @@ view_runs: # the clip versions of all 5,883 segments: x0, x2 and rev built by sc
     run: views/rev/run-12557091
     sha256: acbe8f10426956de0dcdf4ac522a0bd1b9271042b1bfa177a5c0a1e47ed0ea30 # of its manifest.parquet
 
+wordcheck_run: # the word check on the sample, job 12600674 (2026-11-24): F4, the x0 control and the words of x1 passed; the voice of x1 failed (a limitation); no leakage rerun was called
+  run: derived/wordcheck/run-12600674 # written by scripts/check_views.py
+  sha256: 69c5e20ee78a3ff8558987c3300c55484c6b022fa683b9cdba265693702c2806 # of its transcripts.parquet
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet

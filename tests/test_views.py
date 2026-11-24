@@ -825,3 +825,14 @@ def test_data_config_pins_each_built_view_and_the_sample_by_a_file_hash() -> Non
     sample = config["wordcheck_sample"]
     assert sample["run"].startswith("derived/wordcheck_sample/run-")
     assert len(sample["sha256"]) == 64
+
+
+def test_data_config_pins_the_word_check_run_by_its_transcripts_hash() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    pin = config["wordcheck_run"]
+    assert set(pin) == {"run", "sha256"}
+    assert pin["run"] == "derived/wordcheck/run-12600674"  # scripts/check_views.py, job 12600674
+    assert len(pin["sha256"]) == 64
+    assert set(pin["sha256"]) <= set("0123456789abcdef")
+    # Its x0 control passed, so no leakage rerun was called and none is pinned.
+    assert "leakage_rerun" not in config
