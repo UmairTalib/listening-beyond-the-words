@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -734,6 +735,79 @@ def test_data_config_pins_the_view_and_sample_settings() -> None:
         "rev": {"window_ms": 250},
     }
     assert config["word_check"]["sample"] == {"seed": 105, "segments_per_participant": 5}
+
+
+def test_data_config_pins_every_setting_of_the_word_check() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    expected = {
+        "sample": {"seed": 105, "segments_per_participant": 5},
+        "transcribed_views": ["x0", "x1", "x2", "rev"],
+        "partition_round": 1,
+        "whisper": {
+            "compute_type": "float16",
+            "language": "en",
+            "task": "transcribe",
+            "beam_size": 5,
+            "patience": 1.0,
+            "length_penalty": 1.0,
+            "repetition_penalty": 1.0,
+            "no_repeat_ngram_size": 0,
+            "temperature": 0.0,
+            "compression_ratio_threshold": None,
+            "log_prob_threshold": None,
+            "no_speech_threshold": None,
+            "hallucination_silence_threshold": None,
+            "condition_on_previous_text": False,
+            "initial_prompt": None,
+            "prefix": None,
+            "hotwords": None,
+            "suppress_blank": True,
+            "suppress_tokens": [-1],
+            "without_timestamps": False,
+            "max_initial_timestamp": 1.0,
+            "word_timestamps": False,
+            "multilingual": False,
+            "vad_filter": False,
+            "max_new_tokens": None,
+            "chunk_length": None,
+            "clip_timestamps": "0",
+        },
+        "wav2vec2": {"dtype": "float32", "decoding": "greedy"},
+        "rules": {
+            "rev_min_wer": 0.80,
+            "rev_max_leakage_auroc": 0.60,
+            "x0_max_wer": 0.40,
+            "x0_leakage_interval": 0.95,
+            "x1_max_wer": 0.15,
+            "x1_max_icc": 0.30,
+            "probe_margin_auroc": 0.05,
+        },
+        "leakage": {
+            "ngram_range": [1, 2],
+            "min_df": 2,
+            "token_pattern": r"\S+",
+            "logistic_c": 1.0,
+            "max_iter": 5000,
+        },
+        "bootstrap": {"resamples": 10000, "seed": 105},
+        "voice": {
+            "measures": [
+                "F0semitoneFrom27.5Hz_sma3nz_stddevNorm",
+                "loudness_sma3_stddevNorm",
+                "VoicedSegmentsPerSec",
+            ],
+            "level_rms": 0.05,
+            "min_part_samples": 960,
+            "probe_logistic_c": 0.1,
+            "probe_max_iter": 5000,
+        },
+        "recheck_seed": 107,
+        "rerun_time_factor": 1.5,
+        "public_guard": {"run": "derived/check_view_tools/run-12529760", "max_wer": 0.10},
+    }
+    assert config["word_check"] == expected
+    # The same types too: 1.0 is not 1, "0" is not 0 and False is not 0.
+    assert json.dumps(config["word_check"], sort_keys=True) == json.dumps(expected, sort_keys=True)
 
 
 def test_data_config_pins_each_built_view_and_the_sample_by_a_file_hash() -> None:

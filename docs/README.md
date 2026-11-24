@@ -45,7 +45,9 @@ The thesis gives the motivation, the related work and the complete study design.
 | Token | A unit of text that the language model reads or writes. "Yes" and "No" must each be one token. |
 | Turn | One row of a DAIC-WOZ transcript with valid times: the interviewer or the participant speaking. Blank rows and sync markers are not turns. |
 | View | One version of a segment's audio: `x0` original, `x1` re-voiced, `x2` muffled, `rev` reversed. Also called a clip version. |
-| WER | Word error rate: the share of words that speech recognition gets wrong. |
+| Voice probe | A classifier that predicts the label from the 88 eGeMAPS measures of a view, averaged per participant and centred within each `x1` voice with means from the training participants, plus gender, trained and tested on the round-1 folds; its result is the mean of the five fold AUROCs. Its control is the same classifier on gender alone. The voice check of `x1` counts the probe only if the probe on `x0` is more than 0.05 above the control; `x1` then fails if its own probe is more than 0.05 above the control too. |
+| WER | Word error rate: the words that speech recognition substitutes, deletes or inserts, divided by the words of the reference. Inserted words count too, so they can push the WER above 1. |
 | Word check | The check of the views on five random segments per participant. Two ASR systems transcribe each of these segments in every view. `rev` must lose the words (check F4), `x0` is the control, and `x1` must keep the words but lose the participant's voice. |
+| Words heard | The share of the reference's words that speech recognition gets right: its hits divided by the words of the reference. Unlike the WER, it ignores inserted words. The word check reports it next to its chance level, for which each output is scored against another participant's words. |
 | Workspace | The storage folder on OMNI that holds all data, caches and runs. It expires unless extended. |
 | z | A segment's score: logit("Yes") − logit("No"). |

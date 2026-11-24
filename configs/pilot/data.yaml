@@ -58,10 +58,68 @@ views: # docs/pilot_protocol.md, section "Clip versions"; fixed on 2026-11-20, b
     window_ms: 250 # windows start at each part's first sample; a shorter last window is reversed too (pilot protocol, section "Design")
     # The backup of check F4, built only if rev fails the check: each whole part played backwards, also before the fades.
 
-word_check: # docs/pilot_protocol.md, check F4 and section "Clip versions"
+word_check: # docs/pilot_protocol.md, check F4 and section "Clip versions", bullet "Word check"; fixed on 2026-11-24, before it is coded
   sample: # the segments that the word check transcribes
     seed: 105
     segments_per_participant: 5 # all of a participant's segments if fewer
+  transcribed_views: [x0, x1, x2, rev] # each read by both recognisers; x2 reported only
+  partition_round: 1 # round 1 of the pinned partitions (seed 101)
+  # text: wordcheck.words on references, outputs and the leakage classifier: normalise; each run of digits as x1 reads it (revoice.spoken_number); letters spoken one by one joined and hesitations dropped, until nothing changes; five spellings merged
+  whisper: # faster-whisper 1.2.1: compute_type goes to WhisperModel, the rest to transcribe(); every argument that can change the text
+    compute_type: float16
+    language: en
+    task: transcribe
+    beam_size: 5
+    patience: 1.0
+    length_penalty: 1.0
+    repetition_penalty: 1.0
+    no_repeat_ngram_size: 0
+    temperature: 0.0 # one value: one beam decode per window, never random sampling
+    compression_ratio_threshold: null # no rule drops or re-decodes a window's text ...
+    log_prob_threshold: null
+    no_speech_threshold: null # ... the default drops a window judged silent
+    hallucination_silence_threshold: null
+    condition_on_previous_text: false
+    initial_prompt: null
+    prefix: null
+    hotwords: null
+    suppress_blank: true
+    suppress_tokens: [-1] # the model's own list of non-speech symbols
+    without_timestamps: false # a clip over 30 s continues from the last whole segment
+    max_initial_timestamp: 1.0 # seconds
+    word_timestamps: false
+    multilingual: false
+    vad_filter: false
+    max_new_tokens: null
+    chunk_length: null
+    clip_timestamps: "0"
+  wav2vec2: {dtype: float32, decoding: greedy} # one clip at a time; <s>, </s> and <unk> dropped and counted
+  rules: # read on the point estimates, except the x0 control's interval
+    rev_min_wer: 0.80
+    rev_max_leakage_auroc: 0.60
+    x0_max_wer: 0.40
+    x0_leakage_interval: 0.95 # its lower end must lie above 0.5; an interval that includes 0.5 calls the rerun
+    x1_max_wer: 0.15
+    x1_max_icc: 0.30 # each of the three measures, within each gender, after the voice centring
+    probe_margin_auroc: 0.05 # x0's probe counts above control + margin; then x1 fails above it
+  leakage: # one classifier per fold, on the stored words of every segment of the training participants
+    ngram_range: [1, 2] # passed to scikit-learn as a tuple
+    min_df: 2 # training segments
+    token_pattern: '\S+' # every word, one-letter words included
+    logistic_c: 1.0
+    max_iter: 5000
+  bootstrap: # participants drawn with replacement within each class; fold models fixed
+    resamples: 10000
+    seed: 105 # its own stream: runinfo.item_seed(105, "wordcheck", "bootstrap")
+  voice: # eGeMAPSv02, opensmile 2.6.0
+    measures: [F0semitoneFrom27.5Hz_sma3nz_stddevNorm, loudness_sma3_stddevNorm, VoicedSegmentsPerSec]
+    level_rms: 0.05 # each x0 and x1 clip is measured on a copy at this RMS, gaps included, then views.peak_limit
+    min_part_samples: 960 # 60 ms; opensmile gives no value below
+    probe_logistic_c: 0.1
+    probe_max_iter: 5000
+  recheck_seed: 107 # the new sample of an x1 re-check; drawn only if x1's word rule fails
+  rerun_time_factor: 1.5 # the leakage rerun's time limit: measured rate times this
+  public_guard: {run: derived/check_view_tools/run-12529760, max_wer: 0.10} # read before any participant clip
 
 wordcheck_sample: # the segments that the word check transcribes, drawn 2026-11-22 (seed 105): 943 segments
   run: derived/wordcheck_sample/run-20261122T042544Z # written by scripts/draw_wordcheck_sample.py
