@@ -148,6 +148,24 @@ encoder_cache: # docs/pilot_protocol.md, section "Encoder caches and zero-shot s
   cpu_threads: 4 # torch threads in every step-7 job (and --cpus-per-task), so that log-mel features are built the same way everywhere
   verify: {segments_per_view: 25, seed: 108, lm_watch_clips: 25} # plus every two-chunk segment; encoder outputs compared byte for byte, never z; then the language model without its output layer on the longest clips
 
+cache_runs: # the encoder caches of all 5,883 segments, built by scripts/build_caches.py --view, jobs 12611474, 12611476, 12611477 and 12611478, and checked by --verify, job 12611479 (2026-11-25): every sampled feature and output equal; no part of the encoder, the adapter or the language model flagged
+  x0:
+    run: cache/x0/run-12611474
+    sha256: 97a793aeaf4e220e58a274b4eb061e0eb6c06d7f34ab72dbf971e6a631a45379 # of its manifest.parquet
+    verified_by: derived/cache_check/run-12611479
+  x1:
+    run: cache/x1/run-12611476
+    sha256: 6560016ea5ff4d7daba489baa552b6573a2d03a6d67f00a90bfcdc13db2b04af # of its manifest.parquet
+    verified_by: derived/cache_check/run-12611479
+  x2:
+    run: cache/x2/run-12611477
+    sha256: 00d55c420bf55accfef5538f0d76cd12cfadb81a23e1152f10a5a7ef4b663c93 # of its manifest.parquet
+    verified_by: derived/cache_check/run-12611479
+  rev:
+    run: cache/rev/run-12611478
+    sha256: 23203d8c26e1836478622f8cdf43c7d1fb934881f19867d67167c18389764a10 # of its manifest.parquet
+    verified_by: derived/cache_check/run-12611479
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet

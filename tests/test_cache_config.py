@@ -68,9 +68,23 @@ def test_seed_108_is_new_to_the_data_config() -> None:
     assert {value for _, value in found} - {108} <= set(range(101, 108))
 
 
-def test_no_cache_run_and_no_zero_shot_score_is_pinned_before_the_jobs_run() -> None:
-    # The record commits pin them (cache_runs, zeroshot_scores) and replace this test with
-    # one that checks their shape.
+def test_data_config_pins_the_cache_run_of_every_clip_version_with_its_check() -> None:
+    # scripts/build_caches.py --view, one job per version, and --verify, job 12611479, which
+    # checked all four (2026-11-25).
+    jobs = {"x0": 12611474, "x1": 12611476, "x2": 12611477, "rev": 12611478}
     config = load(DATA)
-    assert "cache_runs" not in config
-    assert "zeroshot_scores" not in config
+    pins = config["cache_runs"]
+    assert list(pins) == list(config["view_runs"]) == list(jobs)
+    for view, pin in pins.items():
+        assert set(pin) == {"run", "sha256", "verified_by"}
+        assert pin["run"] == f"cache/{view}/run-{jobs[view]}"
+        assert len(pin["sha256"]) == 64
+        assert set(pin["sha256"]) <= set("0123456789abcdef")
+        assert pin["verified_by"] == "derived/cache_check/run-12611479"
+    assert len({pin["sha256"] for pin in pins.values()}) == len(pins)
+
+
+def test_no_zero_shot_score_is_pinned_before_its_job_runs() -> None:
+    # Its record commit pins it (zeroshot_scores) and replaces this test with one that
+    # checks its shape.
+    assert "zeroshot_scores" not in load(DATA)

@@ -307,6 +307,9 @@ def make_wordcheck_workspace(root: Path) -> WordcheckWorkspace:
         "view_runs": view_runs,
         "word_check": word_check,
     }
+    # The real cache runs are on OMNI, not in this workspace: a test that needs caches
+    # builds and pins its own.
+    config.pop("cache_runs", None)
     text_of = dict(zip(segments["segment"].astype(str), segments["text"], strict=True))
     workspace = WordcheckWorkspace(
         root, config, root.parent / "data.yaml", segments, sample, audio, text_of
