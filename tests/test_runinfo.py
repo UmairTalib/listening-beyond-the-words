@@ -280,3 +280,29 @@ def test_quiet_unraisable_names_the_type_only(capsys: pytest.CaptureFixture[str]
     quiet_unraisable(SimpleNamespace(exc_value=ValueError("SYNTHETICWORD"), object="SYNTHETICWORD"))
     out, err = capsys.readouterr()
     assert (out, err) == ("", "Exception ignored: ValueError\n")
+
+
+def test_deterministic_torch_asks_for_repeatable_kernels_without_autotuning() -> None:
+    import torch
+
+    from listening_beyond_words.runinfo import deterministic_torch
+
+    saved = (
+        torch.are_deterministic_algorithms_enabled(),
+        torch.is_deterministic_algorithms_warn_only_enabled(),
+        torch.backends.cudnn.deterministic,
+        torch.backends.cudnn.benchmark,
+    )
+    try:
+        torch.use_deterministic_algorithms(False)
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+        deterministic_torch()
+        assert torch.are_deterministic_algorithms_enabled()
+        assert torch.is_deterministic_algorithms_warn_only_enabled()
+        assert torch.backends.cudnn.deterministic
+        assert not torch.backends.cudnn.benchmark
+    finally:
+        torch.use_deterministic_algorithms(saved[0], warn_only=saved[1])
+        torch.backends.cudnn.deterministic = saved[2]
+        torch.backends.cudnn.benchmark = saved[3]

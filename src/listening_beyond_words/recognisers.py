@@ -37,7 +37,7 @@ from typing import Any, Final, Protocol
 
 import numpy as np
 
-from listening_beyond_words.runinfo import StepError
+from listening_beyond_words.runinfo import StepError, deterministic_torch
 from listening_beyond_words.views import SAMPLING_RATE
 
 # Whisper -----------------------------------------------------------------------------
@@ -524,15 +524,6 @@ def check_float32_eval(model: Any) -> None:
         raise StepError("the model is in training mode, so its dropout would be on")
 
 
-def _deterministic() -> None:
-    """Ask PyTorch for repeatable results: deterministic kernels, no cuDNN autotuning."""
-    import torch
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
-
-
 class Wav2vec2:
     """The pinned wav2vec2 CTC model in float32, read greedily, one clip at a time.
 
@@ -627,7 +618,7 @@ class Wav2vec2:
         import torch
 
         check_audio(audio)
-        _deterministic()
+        deterministic_torch()
         inputs = self.processor(audio, sampling_rate=SAMPLING_RATE, return_tensors="pt")
         with torch.inference_mode():
             scores = self.model(inputs.input_values.to(self.device)).logits[0]

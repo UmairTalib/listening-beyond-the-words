@@ -37,8 +37,8 @@ Inside the package:
 
 ```text
 settings.py      workspace paths, read from LBW_WORKSPACE
-runinfo.py       time, commit, per-item seeds, file hashes, environment, run.json and
-                 error records without messages
+runinfo.py       time, commit, per-item seeds, repeatable PyTorch kernels, file hashes,
+                 environment, run.json and error records without messages
 sessions.py      the 189 pilot sessions and the guard that refuses every other session
 labels.py        PHQ-8 labels of the pilot
 partitions.py    participants split into folds
@@ -58,7 +58,8 @@ wordcheck.py     the word check (check F4 and the checks of x1): its sample, the
 voicecheck.py    the voice checks of x1: voice measures per part, ICC and voice probe
 recognisers.py   the word check's two ASR systems, faster-whisper and wav2vec2
 models.py        pinned model revisions and the check of loaded weights
-voxtral.py       Voxtral loading, prompt and score
+voxtral.py       Voxtral loading, prompt and score, the cache path (the encoder's output,
+                 the pass-through, the score from a stored output) and the overflow watch
 espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 
@@ -302,7 +303,7 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, and those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`, and a tiny random Voxtral with a stand-in for its processor in `tests/voxtral_fakes.py`.
 - Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.
@@ -315,7 +316,8 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
   5. The clamp example (y = 1, words −1.0, real audio −0.7): G = −0.70 with the clamp and +0.30 without it; push strength 1.000 and 0.500.
   6. The soft hinge is never more than s · ln 2 above the hard hinge, with the largest gap at G = m.
   7. As a bag grows confident (y = 1, words-only reference 0), the cross-entropy push |dCE/dz| = 1 − sigmoid(z̄0) fades gradually, while the gain push sigmoid((m − G)/s) stays close to 1 until G reaches the margin m and then falls off quickly.
-- The pilot also needs these tests: the gain is computed in fp32 from fp16 inputs; λG ramps up over the first 20% of steps; the running statistics use momentum 0.9 from first and second moments; σ never falls below a quarter of its zero-shot value or 0.1; "Yes" and "No" are single tokens; and a score from the cache equals the score from the audio (GPU).
+- The cache-equals-audio test (pilot protocol, section "Encoder caches and zero-shot scores") demands equal bytes, never a tolerance: z from a stored encoder output equals z from the audio, for clips of one and two chunks. It runs on a tiny random Voxtral on the CPU (`tests/test_voxtral.py`, through a `.npy` round trip) and on the real model on OMNI (the GPU tests of `tests/test_voxtral.py`, synthetic clips only).
+- The pilot also needs these tests: the gain is computed in fp32 from fp16 inputs; λG ramps up over the first 20% of steps; the running statistics use momentum 0.9 from first and second moments; and σ never falls below a quarter of its zero-shot value or 0.1.
 
 ## 11. Commits
 

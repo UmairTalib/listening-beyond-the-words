@@ -1,4 +1,8 @@
-"""What every step records about itself: time, commit, seeds, file hashes, run.json and errors."""
+"""What every step records about itself: time, commit, seeds, file hashes, run.json and errors.
+
+It also asks PyTorch for repeatable kernels (``deterministic_torch``); torch is imported
+inside that function only.
+"""
 
 import hashlib
 import json
@@ -71,6 +75,19 @@ def item_seed(seed: int, *keys: int | str) -> int:
     text = json.dumps(values, separators=(",", ":"), ensure_ascii=False)
     digest = hashlib.sha256(text.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") >> 1
+
+
+def deterministic_torch() -> None:
+    """Ask PyTorch for repeatable results: deterministic kernels, no cuDNN autotuning.
+
+    An operation without a deterministic kernel warns instead of stopping the step
+    (``warn_only``). The settings hold for the whole process.
+    """
+    import torch
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def sha256_file(path: Path) -> str:
