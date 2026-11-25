@@ -41,8 +41,9 @@ def test_data_config_pins_every_setting_of_the_encoder_cache() -> None:
     assert json.dumps(block, sort_keys=True) == json.dumps(expected, sort_keys=True)
 
 
-def test_zeroshot_config_pins_the_arm_its_views_and_its_check() -> None:
+def test_zeroshot_config_pins_the_shared_file_the_arm_its_views_and_its_check() -> None:
     expected = {
+        "extends": "train.yaml",  # the rules of the training code (pilot protocol, "Training")
         "arm": "zeroshot",
         "views": ["x0", "x1", "rev"],
         "check": {"segments_per_view": 20, "seed": 108},

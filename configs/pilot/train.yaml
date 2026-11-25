@@ -1,0 +1,84 @@
+# Shared training settings of the pilot; see docs/pilot_protocol.md, sections "Fixed
+# settings" and "Training", fixed on 2026-11-25 before any training run and before any test
+# score. The arm files b0.yaml, b1.yaml and cpg.yaml extend this file, and so does
+# zeroshot.yaml (engineering conventions, section 5): one level only, and an arm file adds
+# only its own keys. How segments fill bags is in data.yaml (bags).
+
+model: voxtral # the pin of this name in configs/pilot/models.yaml (pilot protocol, fixed settings "Model")
+prompt: "Based on this speech, does the speaker have elevated depressive symptoms? Answer Yes or No." # pilot protocol, fixed settings "Prompt"; the code's voxtral.PROMPT
+seeds: # pilot protocol, section "Training", bullet "Who trains, and seeds": a round's seed serves its partitions and its training
+  round_1: 101 # the seed of round 1's partitions (data.yaml, partitions)
+  round_2: 102 # the seed of round 2's partitions
+epochs: 3 # pilot protocol, fixed settings "Epochs": the final weights are kept; 4 for every arm if the 4-epoch rule fires (rules.falling)
+lora: # pilot protocol, fixed settings "LoRA" and section "Training", bullet "Arms and what trains"
+  rank: 16 # r
+  alpha: 32 # α
+  dropout: 0.05 # acts only in training
+  bias: none # no bias trains (PEFT's default), so weight decay applies to every trained tensor
+  init_lora_weights: true # PEFT's default: the second matrix starts at 0, so every run starts from the untrained model
+  use_rslora: false # PEFT's default: the scale is alpha / rank
+  use_dora: false # PEFT's default: plain LoRA
+  trained_adapter: multi_modal_projector # the adapter trains as a copy, saved with LoRA; the original stays frozen
+  targets: 'model\.language_model\.layers\.\d+\.(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj))' # q, k, v, o, gate, up and down of each of the language model's 30 layers (210 places), by their full names, so that the encoder's own q, k and v get none
+optimiser: # AdamW; pilot protocol, fixed settings "Optimiser" and section "Training", bullet "Loss and schedules"
+  learning_rate: 1.0e-4 # LoRA's
+  adapter_learning_rate: 2.0e-5 # the adapter's own rate
+  betas: [0.9, 0.999] # AdamW's default
+  eps: 1.0e-8 # AdamW's default
+  amsgrad: false # AdamW's default
+  foreach: true # the implementation that PyTorch picks on a GPU, set so that the CPU tests run the same one
+  weight_decay: 0.01 # on every trained tensor: none is a bias or a norm
+  grad_clip_norm: 1.0 # over all trained tensors together, after the loss scale is taken out
+  warmup_share: 0.05 # the rate rises in a straight line from 0 over ceil(0.05 * T) steps, then falls along half a cosine to 0, for LoRA and the adapter alike
+precision: # pilot protocol, section "Training", bullet "Number formats and repeatability"
+  autocast: fp16 # the forward pass computes in fp16 ...
+  masters: fp32 # ... while every trained number is kept in fp32
+  scaler: # PyTorch's dynamic loss scaler (torch.amp.GradScaler) with its defaults
+    init_scale: 65536.0 # 2^16
+    growth_factor: 2.0 # the scale doubles after growth_interval_steps clean steps
+    backoff_factor: 0.5 # the scale halves, and the step is skipped, when a gradient overflows
+    growth_interval_steps: 2000
+  checkpointing: every_layer # gradient checkpointing on every layer (bullet "Calls")
+  deterministic: pending # strict or warn_only, set by the commit that records the timing run; until then training (the timing run excepted) and the zero-shot job refuse to run
+  strict_max_extra_time_share: 0.1 # strict mode if it runs and its median three-view step takes at most 10% longer than in warn-only mode
+sampler: # pilot protocol, section "Training", bullet "Bags and epochs"
+  positive_bags: 2 # per step (pilot protocol, fixed settings "Segments and bags")
+  negative_bags: 2 # per step
+  epoch_end: a_class_runs_out # an epoch ends when a class has fewer than 2 bags left
+  draw: least_trained_first # a participant offers the segments used least often so far, ties drawn at random
+  bag_choice: lowest_trained_share_first # within each class, bags ranked by their participant's trained share, lowest first, ties at random
+  step_order: shuffled # the chosen bags shuffled within their class; each step takes the next 2 of each
+loss: # pilot protocol, fixed settings "Loss": CE(x0) + 0.25 CE(x1) + 0.5 CE(x2) + λG · gain term
+  x1_weight: 0.25 # of CE(x1)
+  x2_weight: 0.5 # of CE(x2)
+gain: # pilot protocol, fixed settings "Gain term" and section "Training", bullet "The gain term"
+  margin: 0.3 # m; 0.5 or 0.1 if the gain-alive rule fires (rules.alive)
+  softness: 0.1 # s
+  ramp_share: 0.2 # λG = min(1, t / ceil(0.2 * T)) at step t, counted from 0
+  momentum: 0.9 # of the running averages of the bag means and of their squares
+  start_steps: 8 # the averages start from the zero-shot scores of the bags of the sampler's first 8 steps, 32 bags (section "Encoder caches and zero-shot scores")
+  floor_share: 0.25 # σ never falls below a quarter of the start spread ...
+  floor_logit: 0.1 # ... nor below 0.1
+rules: # pilot protocol, sections "Feasibility checks", "Allowed setting changes" and "Training"
+  f1_min_scale: 1.0 # check F1 fails if the loss scale falls below 1 (bullet "Check F1")
+  alive: # the gain-alive rule and check F2, on CPG's training logs (bullet "F2 and the two allowed rules")
+    epochs: [2, 3] # the share of bags with G_b < m in these epochs together
+    min_share: 0.2 # below this share, m becomes margin_if_below
+    max_share: 0.8 # above this share, m becomes margin_if_above; F2 passes from min_share to max_share, both included
+    margin_if_below: 0.5 # section "Allowed setting changes", bullet "Gain-alive rule"
+    margin_if_above: 0.1 # section "Allowed setting changes", bullet "Gain-alive rule"
+  falling: # the 4-epoch rule, on the first CPG run's training logs (bullet "F2 and the two allowed rules")
+    loss: ce_part # CE(x0) + 0.25 CE(x1) + 0.5 CE(x2), without the gain term
+    min_drop_share: 0.05 # the mean of epoch 3's second half lies below that of its first half by at least 5% of it ...
+    min_standard_errors: 2.0 # ... and by more than 2 standard errors of the difference
+    epochs_if_falling: 4 # section "Allowed setting changes", bullet "4-epoch rule"
+  f5_max_hours: 4.0 # check F5: the training part of a three-view run takes at most 4 GPU-hours (bullet "Check F5")
+scoring: # pilot protocol, section "Training", bullet "Scoring"
+  views: [x0, rev] # every segment of the test fold, one clip per call, by the zero-shot job's scoring code
+  format: fp16 # LoRA and the adapter cast to fp16, the format that training computes in
+timing: # pilot protocol, section "Training", bullet "Check F5": the timing run of CPG on round 1, fold 1
+  steps_per_mode: 10 # the sampler's first 10 steps in warn-only mode, then its next 10 in strict mode, on the same model
+  first_steps_left_out: 1 # the first timed step of each mode warms up
+  stand_in_start: # μ and σ of the timing run, which keeps no weights and reads no zero-shot score
+    mu_logit: 0.0 # a stand-in
+    sigma_logit: 1.0 # a stand-in

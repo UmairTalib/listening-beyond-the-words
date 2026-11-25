@@ -1,0 +1,8 @@
+# Arm B1 of the pilot: cross-entropy on the three views, CPG's code with λG = 0; see
+# docs/pilot_protocol.md, design "Arms" and section "Training", bullet "Arms and what
+# trains". Every other setting comes from train.yaml.
+
+extends: train.yaml # the shared settings (engineering conventions, section 5)
+arm: b1 # pilot protocol, design "Arms"
+views: [x1, x0, x2] # CE(x0) + 0.25 CE(x1) + 0.5 CE(x2), in the order a bag goes through the model: x1 first, whose bag mean the gain reads, then x0, then x2 (bullet "Calls")
+lambda_g: 0.0 # B1 computes the gain and its running statistics, starts and logs them as CPG does, and never trains on them

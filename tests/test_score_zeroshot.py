@@ -7,7 +7,8 @@ the jobs' own loader, with a stand-in for the processor. The caches of the four 
 versions are built and checked by the cache job itself (scripts/build_caches.py) and
 pinned, so each cache differs per segment and view, and the model's z is a function of the
 cached output alone: the tests compute it again from each file. The rules of the training
-code count as dated: a train.yaml of the tests' own stands in for step 8's.
+code count as dated, with their repeatability mode set: the repository's train.yaml, its
+precision.deterministic set to warn_only as the commit of the timing run would set it.
 """
 
 import contextlib
@@ -69,6 +70,7 @@ STAMP = "20261201-120000"
 WORDCHECK_RUN = "derived/wordcheck/run-700"
 FAST_CACHE_CHECK = {"segments_per_view": 5, "seed": 108, "lm_watch_clips": 3}  # config: 25, 108, 25
 FAST_ZEROSHOT = {  # configs/pilot/zeroshot.yaml checks 20 segments per view
+    "extends": "train.yaml",
     "arm": "zeroshot",
     "views": ["x0", "x1", "rev"],
     "check": {"segments_per_view": 3, "seed": 108},
@@ -92,6 +94,8 @@ NUMERIC_RECORD = {
     "cublas_workspace_config": ":4096:8",
 }
 PLANTED = 12.345678
+TRAINING = REPO / "configs" / "pilot" / "train.yaml"
+MODE = "warn_only"  # a repeatability mode as the commit of the timing run sets it; not pending
 
 
 # The workspace ---------------------------------------------------------------------------------
@@ -262,6 +266,13 @@ def training_path(workspace: WordcheckWorkspace) -> Path:
     return workspace.config_path.parent / "train.yaml"
 
 
+def write_training(workspace: WordcheckWorkspace, mode: str = MODE) -> None:
+    """The repository's train.yaml beside the workspace's configs, with a repeatability mode."""
+    config = yaml.safe_load(TRAINING.read_text(encoding="utf-8"))
+    config["precision"]["deterministic"] = mode
+    training_path(workspace).write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def patch_job(
     module: ModuleType,
     workspace: WordcheckWorkspace,
@@ -278,8 +289,8 @@ def patch_job(
         path.write_text(yaml.safe_dump(zeroshot or FAST_ZEROSHOT), encoding="utf-8")
         monkeypatch.setattr(module, "ZEROSHOT", path)
         monkeypatch.setattr(module, "run_name", lambda: f"pilot-zeroshot-{STAMP}")
-    if hasattr(module, "TRAINING"):  # the rules of the training code, dated
-        training_path(workspace).write_text("# step 8's settings\n", encoding="utf-8")
+    if hasattr(module, "TRAINING"):  # the rules of the training code, dated, their mode set
+        write_training(workspace)
         monkeypatch.setattr(module, "TRAINING", training_path(workspace))
     monkeypatch.setattr(module, "git_state", lambda: {"commit": "c" * 40, "dirty": False})
     monkeypatch.setattr(module, "stop_on_sigterm", lambda: None)
@@ -1432,6 +1443,7 @@ def test_the_job_refuses_caches_of_another_width_than_the_model(
         ("gpu", "no CUDA GPU"),
         ("argument", "usage: score_zeroshot.py (no arguments"),
         ("training", "the rules of the training code are not dated yet ("),
+        ("pending", "the repeatability mode of training is not set yet ("),
     ],
 )
 def test_the_job_refuses_to_run_outside_a_clean_offline_gpu_job(
@@ -1456,12 +1468,35 @@ def test_the_job_refuses_to_run_outside_a_clean_offline_gpu_job(
         monkeypatch.setattr(module, "gpu_facts", lambda: {"gpu": None, "cuda": None})
     elif change == "training":  # step 8's first commit has not dated them
         monkeypatch.setattr(module, "TRAINING", workspace.root / "no" / "train.yaml")
+    elif change == "pending":  # the commit of the timing run has not set the mode yet
+        write_training(workspace, "pending")
     else:
         monkeypatch.setattr(sys, "argv", ["score_zeroshot.py", "--view", "x0"])
     with pytest.raises(SystemExit):
         module.main()
     assert f"FAILED: StepError: {message}" in capsys.readouterr().out
     assert not (workspace.root / "runs").exists()
+    assert model.calls == []
+
+
+@pytest.mark.parametrize("mode", ["strict", "warn_only"])
+def test_either_mode_that_the_timing_run_can_set_lets_the_job_past_its_guards(
+    uncached: WordcheckWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    mode: str,
+) -> None:
+    module = load_script("score_zeroshot")
+    model = Model()
+    patch_job(module, uncached, monkeypatch, model)
+    write_training(uncached, mode)
+    monkeypatch.setenv("SLURM_JOB_ID", JOB)
+    monkeypatch.setattr(sys, "argv", ["score_zeroshot.py"])
+    with pytest.raises(SystemExit):
+        module.main()
+    # It made its run folder and stopped only at the caches, which this workspace lacks.
+    assert "FAILED: StepError: no cache run of x0 is pinned (cache_runs)" in capsys.readouterr().out
+    assert info_of(run_dir(uncached))["status"] == "failed"
     assert model.calls == []
 
 

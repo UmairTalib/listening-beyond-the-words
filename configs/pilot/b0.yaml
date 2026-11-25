@@ -1,0 +1,7 @@
+# Arm B0 of the pilot: standard LoRA fine-tuning on the original clips; see
+# docs/pilot_protocol.md, design "Arms" and section "Training", bullet "Arms and what
+# trains". Every other setting comes from train.yaml.
+
+extends: train.yaml # the shared settings (engineering conventions, section 5)
+arm: b0 # pilot protocol, design "Arms"
+views: [x0] # CE(x0) only; no gain term, so no lambda_g

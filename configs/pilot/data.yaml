@@ -222,9 +222,9 @@ listening_checks: # blind listening checks already heard; a new check never reus
   - run: derived/listening_check/run-20261118T015649Z # seed 102, 2026-11-18: another voice in 0 of 20 clips (passed)
     sha256: 015b4bd5312401430457b184610a1d139df67d17f7df60c6b19c3e284d99e69e # of its key.tsv
 
-bags: # docs/pilot_protocol.md, fixed settings "Segments and bags"; how segments fill bags fixed 2026-11-18
+bags: # docs/pilot_protocol.md, fixed settings "Segments and bags"; how segments fill bags fixed 2026-11-18, how they are drawn fixed 2026-11-25 (section "Training", bullet "Bags and epochs"; train.yaml, sampler)
   segments_per_bag: 4
-  max_segments_per_epoch: 16 # per participant, drawn at random each epoch; 8 for every arm if check F5 fails
+  max_segments_per_epoch: 16 # per participant and epoch: the segments used least often so far, ties drawn at random; 8 for every arm if the timing run projects more than 4 GPU-hours for a three-view run or check F5 fails
   repeat_segments: false # whole bags only: leftover segments wait for a later epoch; fewer than 4 segments give no training bag
 
 partitions:

@@ -1,0 +1,7 @@
+# Arm CPG of the pilot: B1 plus the gain term; see docs/pilot_protocol.md, fixed settings
+# "Loss" and "Gain term" and section "Training". Every other setting comes from train.yaml.
+
+extends: train.yaml # the shared settings (engineering conventions, section 5)
+arm: cpg # pilot protocol, design "Arms"
+views: [x1, x0, x2] # as B1: x1 first, whose bag mean the gain reads, then x0, then x2 (bullet "Calls")
+lambda_g: 1.0 # pilot protocol, fixed settings "Gain term": λG = 1, ramped up over the first 20% of steps (train.yaml, gain.ramp_share)

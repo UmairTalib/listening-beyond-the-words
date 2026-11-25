@@ -30,6 +30,7 @@ LONG = "301_001"  # two chunks in x0 and rev, as the 37.4 s clip
 RUN = "runs/pilot/pilot-zeroshot-20261201-120000"
 CHECK_RUN = "derived/cache_check/run-10"
 SETTINGS = {
+    "extends": "train.yaml",
     "arm": "zeroshot",
     "views": ["x0", "x1", "rev"],
     "check": {"segments_per_view": 20, "seed": 108},
@@ -51,10 +52,18 @@ def test_the_settings_read_the_pinned_zeroshot_config() -> None:
     ("change", "message"),
     [
         (lambda c: c.pop("check"), "zeroshot.yaml: missing keys ['check'], unknown keys []"),
+        (lambda c: c.pop("extends"), "zeroshot.yaml: missing keys ['extends'], unknown keys []"),
         (
-            lambda c: c.update(extends="train.yaml"),
-            "zeroshot.yaml: missing keys [], unknown keys ['extends']",
+            lambda c: c.update(extends="other.yaml"),
+            "zeroshot.yaml must extend 'train.yaml', the shared training settings in its"
+            " folder (engineering conventions, section 5), not 'other.yaml'",
         ),
+        (
+            lambda c: c.update(extends="../pilot/train.yaml"),
+            "zeroshot.yaml must extend 'train.yaml', the shared training settings",
+        ),
+        (lambda c: c.update(extends=None), "zeroshot.yaml must extend 'train.yaml'"),
+        (lambda c: c.update(notes="x"), "zeroshot.yaml: missing keys [], unknown keys ['notes']"),
         (lambda c: c.update(arm="b0"), "zeroshot.yaml: the arm must be 'zeroshot', not 'b0'"),
         (lambda c: c.update(views=["x0", "x1", "x2", "rev"]), "zeroshot.yaml: the views must be"),
         (lambda c: c.update(views=["x0", "rev", "x1"]), "zeroshot.yaml: the views must be"),

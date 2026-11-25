@@ -79,7 +79,7 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - The encoder caches are one GPU job, `build_caches.py` (job file `scripts/slurm/build_caches.sbatch`, job name `lbw-build-caches`), with two modes, whose options name a pinned view or earlier runs, never a setting (section 5):
   - `--view <view>` runs Voxtral's frozen audio encoder on every clip of the pinned view, one clip per call, and writes its outputs in fp16 to `cache/<view>/run-<job id>/` (section 6), with a `manifest.parquet` that the pin `cache_runs` names by its SHA-256;
   - `--verify cache/<view>/run-<job id> ...` computes the log-mel features and the encoder outputs of a sample of each named cache run again from the audio and compares them byte for byte, then runs the language model without its output layer on the longest clips with the overflow watch on. It writes only `derived/cache_check/run-<job id>/run.json`, which a pin of `cache_runs` names as its `verified_by`. A flag in the language model leaves the caches standing; `cache.pinned_cache` passes it on to the jobs that score.
-- The zero-shot scores are one GPU job, `score_zeroshot.py` (job file `scripts/slurm/score_zeroshot.sbatch`, job name `lbw-score-zeroshot`), which takes no option. It refuses to run until the rules of the training code are dated (`configs/pilot/train.yaml` exists) and the pinned word-check run shows the checks of `x1` finished, and while the check of any of the four caches flagged the language model. It scores a check sample from the audio and from the cache, which must agree bit for bit, and then scores every segment of `x0`, `x1` and `rev` from the pinned caches. It writes `runs/pilot/pilot-zeroshot-<YYYYmmdd-HHMMSS>/`, the run name of section 4 without round and fold, whose `scores.parquet` the pin `zeroshot_scores` names by its SHA-256. It reads no label.
+- The zero-shot scores are one GPU job, `score_zeroshot.py` (job file `scripts/slurm/score_zeroshot.sbatch`, job name `lbw-score-zeroshot`), which takes no option. It refuses to run until the rules of the training code are dated (`configs/pilot/train.yaml` exists), while their repeatability mode (`precision.deterministic` there) still says `pending`, which the commit that records the GPU tests and the training timing run changes, until the pinned word-check run shows the checks of `x1` finished, and while the check of any of the four caches flagged the language model. It scores a check sample from the audio and from the cache, which must agree bit for bit, and then scores every segment of `x0`, `x1` and `rev` from the pinned caches. It writes `runs/pilot/pilot-zeroshot-<YYYYmmdd-HHMMSS>/`, the run name of section 4 without round and fold, whose `scores.parquet` the pin `zeroshot_scores` names by its SHA-256. It reads no label.
 - Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
@@ -189,21 +189,22 @@ Code reaches OMNI only through git: commit and push on the Mac, then `git pull` 
 - A value taken from the method cites its source in a comment, for example `# pilot protocol, fixed settings`.
 - Model revisions are commit hashes, never `main`.
 - Paths in configs are relative to the workspace root.
-- The run record stores the resolved config and its SHA-256 (canonical JSON, sorted keys). Training run folders use the first 12 characters of the hash.
+- The run record stores the resolved config, the arm file's own keys and those of `train.yaml` merged, and its SHA-256 (canonical JSON, sorted keys). Training run folders are named as in section 4, with the arm, round, fold and time, not by the hash.
 
 The pilot configs:
 
 ```text
-configs/pilot/data.yaml       labels, partitions (seeds 101 and 102, 5 folds, 15% inner
-                              validation, file hashes), segments (40 words, 300 ms),
-                              clip versions, word-check thresholds
+configs/pilot/data.yaml       labels, partitions (seeds 101 and 102, 5 folds, file
+                              hashes), segments (40 words, 300 ms), bags, clip versions,
+                              word-check thresholds
 configs/pilot/models.yaml     pinned revisions of Voxtral, Kokoro and the two ASR models
-configs/pilot/train.yaml      shared training settings: model, LoRA, optimiser, epochs,
-                              bags, prompt, seeds per round
+configs/pilot/train.yaml      shared training settings: model, prompt, seeds per round,
+                              epochs, LoRA, optimiser, precision, sampler, loss, gain,
+                              rules, scoring and the timing run
 configs/pilot/b0.yaml         extends train.yaml: cross-entropy on x0
 configs/pilot/b1.yaml         extends train.yaml: cross-entropy on x0, x1 and x2
 configs/pilot/cpg.yaml        extends train.yaml: B1 plus the gain term
-configs/pilot/zeroshot.yaml   scoring only
+configs/pilot/zeroshot.yaml   extends train.yaml: scoring only
 ```
 
 ## 6. Paths and the workspace
@@ -252,7 +253,8 @@ Only code, configs, documentation and aggregate numbers go into git.
 ## 8. Reproducibility
 
 - Every random source is seeded from the config. In the pilot, round 1 uses partition and training seed 101, and round 2 uses 102.
-- `runinfo.seed_everything(seed)` seeds Python, NumPy and PyTorch and turns on deterministic algorithms with `warn_only=True`. NumPy code takes a `numpy.random.Generator`.
+- `runinfo.seed_everything(seed)` seeds Python, NumPy and PyTorch. NumPy code takes a `numpy.random.Generator`.
+- Training's repeatability follows `precision.deterministic` in `configs/pilot/train.yaml` (pilot protocol, section "Training", bullet "Number formats and repeatability"). With `warn_only`, PyTorch's deterministic algorithms are on with `warn_only=True`, as in the jobs of the encoder caches and the zero-shot scores (`runinfo.deterministic_torch`, which `voxtral.set_numerics` calls), so an operation without a repeatable version only warns; with `strict`, training stops at any such operation. The timing run decides: `strict` if strict mode runs and its median three-view step takes at most 10% longer than in warn-only mode, otherwise `warn_only`. Until the commit that records the timing run sets it, the key says `pending`, and every training run but the timing run refuses it, as does the zero-shot job. Scoring always switches back to the zero-shot job's numeric settings first.
 - Randomness per item, such as the Kokoro rendering of a segment, uses a seed derived from the run seed and the item ID with `hashlib`. Never use Python's `hash()`: it changes between processes.
 - GPU runs are close to repeatable, not bit-identical. Record the facts and promise no more. The comparisons of the encoder caches and the zero-shot scores are the one exception (pilot protocol, section "Encoder caches and zero-shot scores"): the encoder's output for a clip, and the score z of a clip scored on its own, repeat byte for byte when the jobs use the same recorded numeric settings on the same GPU and CPU type. So these comparisons demand equal bytes, never a tolerance, and a difference is a fault to find and fix.
 - Every step writes `run.json` into its output folder, at the start and again at the end:
@@ -261,7 +263,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 | --- | --- |
 | `run_id`, `step`, `arm`, `round`, `fold` | what ran |
 | `status`, `started_utc`, `finished_utc` | `running`, `done` or `failed`, and when |
-| `git` | commit, `git describe` output and a dirty flag |
+| `git` | commit, dirty flag, and the output of `git describe --tags --always --dirty` with the tags at the commit, from `runinfo.git_state` |
 | `config` | path, resolved content and SHA-256 |
 | `inputs` | workspace-relative input paths with their SHA-256 or run IDs |
 | `seeds` | every seed used |
@@ -270,9 +272,9 @@ Only code, configs, documentation and aggregate numbers go into git.
 
 The data steps built so far record the fields that apply to them: `config` holds the file and its SHA-256, `settings` the values used, and `environment` the packages they use. `runinfo.write_json` writes a `run.json` in one step, to a temporary file that is then renamed onto it, so a step that dies while writing never leaves half of one; the merge of `x1` counts a run folder with a `run.json` as merged.
 
-- `train`, `score` and `evaluate` refuse to start when the checkout has uncommitted changes. Their `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
+- `train` and `evaluate` refuse to start when the checkout has uncommitted changes. `train` scores its own test fold, in the same job, right after it saves the weights (pilot protocol, section "Training", bullet "Scoring"), so there is no `score` step. Their `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
 - Partitions are saved with their SHA-256 before any training. `configs/pilot/data.yaml` records the hashes, and training stops when a partition file does not match.
-- Settings freeze (week 3): the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then release 0.1.0 as described in section 13: a `chore(release): 0.1.0` commit tagged `v0.1.0`. Every later pilot run uses this tag or a later `0.1.x`. No setting changes after test scores are seen.
+- Settings freeze, after the training logs of the first CPG run of round 1, fold 1: the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then release 0.1.0 as described in section 13: a `chore(release): 0.1.0` commit tagged `v0.1.0`. Until a `v0.1.x` tag exists, the train job refuses every run but the timing run, B0's round 1 and that first CPG run; once one exists, every pilot run, reruns of these included, must come from a checkout at the newest `v0.1.x` tag, so that every run after a release uses what it holds. No setting changes after test scores are seen, apart from these two rules and the pre-set fallbacks (8 segments for check F5; the flagged layers in fp32 after an overflow), which were fixed before any score. A fallback used after the freeze is dated in the same way, with its evidence, in one `exp(pilot)` commit released as the next `0.1.x`.
 
 ## 9. Slurm jobs
 
@@ -282,33 +284,38 @@ The data steps built so far record the fields that apply to them: `config` holds
 
 ```bash
 #!/usr/bin/env bash
-# Slurm job: train one arm of the pilot, one fold-run per array task (GPU).
+# Slurm job: train one arm of the pilot in one round, one fold-run per array task (GPU).
+# The 4 CPUs are those of the cache jobs (encoder_cache.cpu_threads), so that the numeric
+# settings match the caches' record. After the settings freeze, submit from a checkout at
+# the newest v0.1.x tag (git checkout v0.1.x on OMNI); the job refuses any other.
 #
 # Submit from an OMNI login node:
-#   scripts/slurm/submit.sh --job-name=lbw-train-cpg train configs/pilot/cpg.yaml
+#   scripts/slurm/submit.sh --job-name=lbw-train-cpg train configs/pilot/cpg.yaml 1
 #
-# Array task t trains round t/5 + 1, fold t%5 + 1 (10 fold-runs), at most 10 at once.
+# Array task t trains fold t + 1 of the given round (5 fold-runs).
 #
 #SBATCH --job-name=lbw-train
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
 #SBATCH --time=06:00:00
-#SBATCH --array=0-9%10
+#SBATCH --array=0-4
 set -euo pipefail
 source scripts/slurm/common.sh
 
-config="${1:?usage: train.sbatch <config>}"
+config="${1:?usage: train.sbatch <config> <round> [--timing]}"
+round="${2:?usage: train.sbatch <config> <round> [--timing]}"
+shift 2
 task="${SLURM_ARRAY_TASK_ID:?submit this job as an array}"
-python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((task % 5 + 1))
+python scripts/train.py --config "$config" --round "$round" --fold $((task + 1)) "$@"
 ```
 
 - Order: shebang, a comment with the purpose, how to submit and any array mapping, then the `#SBATCH` lines. Slurm stops reading `#SBATCH` lines at the first command.
 - Set partition, time, memory and CPUs explicitly. GPU steps use `--partition=gpu --gres=gpu:1`. CPU steps use `short` when they fit its time limit, otherwise `medium`. Ask for about 1.5 times the measured run time; the limit is 6 h on `short` and 1 day on `gpu` and `medium`.
-- Independent runs go side by side as array tasks: on `gpu` with one GPU each, at most 10 at once (`%10`); on `short`, at most 20 at once (`%20`).
+- Independent runs go side by side as array tasks: on `gpu` with one GPU each, at most 10 at once (`%10`); on `short`, at most 20 at once (`%20`). The limit on `gpu` holds across arrays too: the train job runs one array of 5 tasks per arm and round, so at most two such arrays run at a time, and later ones wait with `--dependency`.
 - `common.sh` sets `umask 077`, turns off core dumps (`ulimit -c 0`, so that a crash never writes process memory into the clone), purges the modules (the PyTorch wheels bring their own CUDA), activates the environment, sets `HF_HOME`, `HF_HUB_OFFLINE=1` and the determinism variables, and prints the job, node and commit.
 - Jobs never download. Fetch models on a login node into `$LBW_WORKSPACE/hf` first, at the revisions in `configs/pilot/models.yaml`.
 - A job never deletes or overwrites earlier output. A failed run keeps its folder with `status: failed`; the rerun writes a new folder.
@@ -407,9 +414,9 @@ A change is done when one commit holds all of these:
 
 | Tag | Marks |
 | --- | --- |
-| `v0.1.0` | Pilot settings frozen (week 3). Every later run uses this tag or a later `0.1.x`. |
-| `v0.1.x` | Fixes that change no method setting, for example in the analysis code |
-| `v0.2.0` | Pilot report: aggregate results and the go / no-go decision (week 4) |
+| `v0.1.0` | Pilot settings frozen, after the training logs of the first CPG run of round 1, fold 1 (section 8). Every later run uses the newest `0.1.x` tag. |
+| `v0.1.x` | Fixes that change no method setting, for example in the analysis code, and a pre-set fallback used after the freeze (section 8) |
+| `v0.2.0` | Pilot report: aggregate results and the go / no-go decision |
 | `v0.3.0` and later | Main study: registration, frozen main runs, external test |
 | `v1.0.0` | The code and aggregate results of the submitted thesis |
 

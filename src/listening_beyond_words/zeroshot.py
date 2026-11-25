@@ -10,7 +10,8 @@ the two z must agree bit for bit. It writes ``scores.parquet`` (``SCORE_COLUMNS`
 ``runs/pilot/pilot-zeroshot-<YYYYmmdd-HHMMSS>/``, which ``configs/pilot/data.yaml`` pins as
 ``zeroshot_scores``. ``load_zeroshot_scores`` reads the pinned scores once they fit the
 current cache pins. The settings are in ``configs/pilot/zeroshot.yaml``
-(``ZeroshotSettings``).
+(``ZeroshotSettings``), which extends the shared training settings,
+``configs/pilot/train.yaml``.
 
 No label is read here: the AUROC of the zero-shot arm is computed later by the analysis
 code.
@@ -39,7 +40,11 @@ VIEWS: Final = ("x0", "x1", "rev")
 SCORE_COLUMNS: Final = ("segment", "session", "view", "z")
 SCORES: Final = "scores.parquet"
 SAMPLE_STREAM: Final = "zeroshot"  # the check's draw: item_seed(seed, SAMPLE_STREAM, view)
-_CONFIG_KEYS: Final = ("arm", "views", "check")
+# The shared training settings, which zeroshot.yaml extends like every arm file
+# (engineering conventions, section 5): the zero-shot scores wait for the rules of the
+# training code (pilot protocol, section "Training").
+EXTENDS: Final = "train.yaml"
+_CONFIG_KEYS: Final = ("extends", "arm", "views", "check")
 _CHECK_KEYS: Final = ("segments_per_view", "seed")
 _PIN_KEYS: Final = frozenset({"run", "sha256"})
 
@@ -47,6 +52,9 @@ _PIN_KEYS: Final = frozenset({"run", "sha256"})
 @dataclass(frozen=True, slots=True)
 class ZeroshotSettings:
     """The settings of the zero-shot arm (``configs/pilot/zeroshot.yaml``).
+
+    The file extends ``train.yaml`` (``EXTENDS``), whose settings the zero-shot job reads
+    apart; these are the zero-shot arm's own.
 
     Attributes:
         views: The scored views, in the order they are scored: ``VIEWS``.
@@ -64,19 +72,22 @@ class ZeroshotSettings:
         """Read the settings and check every key and value.
 
         Args:
-            config: The content of ``configs/pilot/zeroshot.yaml``.
+            config: The content of ``configs/pilot/zeroshot.yaml``, ``extends`` included.
 
         Returns:
             The settings.
 
         Raises:
-            StepError: If a key is missing or unknown, the arm is not ``zeroshot``, the
-                views are not ``VIEWS`` in this order, or a value of the check is not a
-                whole number of at least 1.
+            StepError: If a key is missing or unknown, the file does not extend exactly
+                ``train.yaml``, the arm is not ``zeroshot``, the views are not ``VIEWS``
+                in this order, or a value of the check is not a whole number of at least 1.
         """
-        # An arm file extends train.yaml (engineering conventions, section 5) once step 8
-        # creates it; until this reader resolves that key, it refuses it as unknown.
         block = _keys(config, _CONFIG_KEYS, "zeroshot.yaml")
+        if block["extends"] != EXTENDS:
+            raise StepError(
+                f"zeroshot.yaml must extend {EXTENDS!r}, the shared training settings in its"
+                f" folder (engineering conventions, section 5), not {block['extends']!r}"
+            )
         if block["arm"] != ARM:
             raise StepError(f"zeroshot.yaml: the arm must be {ARM!r}, not {block['arm']!r}")
         views = block["views"]

@@ -25,6 +25,7 @@ The thesis gives the motivation, the related work and the complete study design.
 | CPG | Counterfactual paralinguistic gain: B1 plus the gain term. "Paralinguistic" means everything in speech beyond the words, such as pitch, timing, loudness and voice quality. |
 | CV | Cross-validation: train on some folds, test on the one left out, and repeat. |
 | eGeMAPS | A standard set of 88 voice measures, such as pitch, loudness and their variability, computed with opensmile. The checks of `x1` use them. |
+| Epoch | One pass of the bag sampler. Each participant offers at most 16 segments, those used least often so far, as whole bags; the epoch ends when a class has fewer than 2 bags left, and the segments left over wait for a later epoch. The pilot trains 3 epochs. |
 | Fold, round, run | A fold is one fifth of the participants. A round is one partition into five folds. A run (or fold-run) trains on four folds and tests on the fifth. |
 | Gain (G_b) | How much more correct the model is on the real audio than on the words alone, within one bag. |
 | Hinge active | G_b is below the margin m, so the gain term pushes in this bag. |
@@ -41,6 +42,7 @@ The thesis gives the motivation, the related work and the complete study design.
 | Re-voiced clip | `x1`: the segment's words read part by part by Kokoro-82M, a text-to-speech model, in a synthetic voice of the participant's gender. The words stay; the participant's voice is gone. |
 | Reversed clip | `rev`: like the original clip, but each part is played backwards in 250 ms windows before it gets its fades, so that the words are removed (check F4). Pitch and voice quality stay. Used for testing only. |
 | Segment | Exactly 40 consecutive words of one participant, with their audio. |
+| Step | One update of the trained weights, from 4 bags: 2 of PHQ-8-positive participants and 2 of PHQ-8-negative ones. A step whose update the loss scaler skips still counts. |
 | Stop-gradient | A value that the loss uses but that training does not change through this term. |
 | Study | A set of runs with one protocol: the pilot now, the main study later. |
 | Token | A unit of text that the language model reads or writes. "Yes" and "No" must each be one token. |
