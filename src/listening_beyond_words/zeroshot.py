@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from listening_beyond_words.cache import relative_run
+from listening_beyond_words.config import SHARED_FILE
 from listening_beyond_words.runinfo import StepError, item_seed, sha256_file
 from listening_beyond_words.settings import Workspace
 
@@ -40,10 +41,6 @@ VIEWS: Final = ("x0", "x1", "rev")
 SCORE_COLUMNS: Final = ("segment", "session", "view", "z")
 SCORES: Final = "scores.parquet"
 SAMPLE_STREAM: Final = "zeroshot"  # the check's draw: item_seed(seed, SAMPLE_STREAM, view)
-# The shared training settings, which zeroshot.yaml extends like every arm file
-# (engineering conventions, section 5): the zero-shot scores wait for the rules of the
-# training code (pilot protocol, section "Training").
-EXTENDS: Final = "train.yaml"
 _CONFIG_KEYS: Final = ("extends", "arm", "views", "check")
 _CHECK_KEYS: Final = ("segments_per_view", "seed")
 _PIN_KEYS: Final = frozenset({"run", "sha256"})
@@ -53,8 +50,10 @@ _PIN_KEYS: Final = frozenset({"run", "sha256"})
 class ZeroshotSettings:
     """The settings of the zero-shot arm (``configs/pilot/zeroshot.yaml``).
 
-    The file extends ``train.yaml`` (``EXTENDS``), whose settings the zero-shot job reads
-    apart; these are the zero-shot arm's own.
+    The file extends ``train.yaml`` (``config.SHARED_FILE``), like every arm file
+    (engineering conventions, section 5): the zero-shot scores wait for the rules of the
+    training code (pilot protocol, section "Training"). The zero-shot job reads the shared
+    settings apart (``config.resolve_config``); these are the zero-shot arm's own.
 
     Attributes:
         views: The scored views, in the order they are scored: ``VIEWS``.
@@ -83,9 +82,9 @@ class ZeroshotSettings:
                 in this order, or a value of the check is not a whole number of at least 1.
         """
         block = _keys(config, _CONFIG_KEYS, "zeroshot.yaml")
-        if block["extends"] != EXTENDS:
+        if block["extends"] != SHARED_FILE:
             raise StepError(
-                f"zeroshot.yaml must extend {EXTENDS!r}, the shared training settings in its"
+                f"zeroshot.yaml must extend {SHARED_FILE!r}, the shared training settings in its"
                 f" folder (engineering conventions, section 5), not {block['extends']!r}"
             )
         if block["arm"] != ARM:
@@ -157,10 +156,12 @@ def load_zeroshot_scores(workspace: Workspace, config: Mapping[str, Any]) -> pd.
 
     The pin names the run and the SHA-256 of its ``scores.parquet``. The file must match
     the pin, and the run's ``run.json`` must come from ``scripts/score_zeroshot.py``, say
-    ``done``, list that file, have scored the views ``VIEWS`` and record as its caches
-    exactly the current pins of ``cache_runs``. The table must hold exactly one finite z
-    per segment of the pinned cache run of each view (its ``manifest.parquet``, checked
-    against its pin) and per view, with the segment's session.
+    ``done``, list that file, have scored the views ``VIEWS`` (``settings.zeroshot.views``,
+    which the job records with the rest of its resolved config, ``config.resolve_config``)
+    and record as its caches exactly the current pins of ``cache_runs``. The table must
+    hold exactly one finite z per segment of the pinned cache run of each view (its
+    ``manifest.parquet``, checked against its pin) and per view, with the segment's
+    session.
 
     Args:
         workspace: The workspace.

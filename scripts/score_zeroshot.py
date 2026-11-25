@@ -17,9 +17,10 @@ Stages, in one process:
      (precision.deterministic is strict or warn_only, no longer pending), so that every
      outcome of the GPU tests and the timing run is settled, and no setting is written,
      before any test score exists (pilot protocol, section "Training", bullet "Order,
-     release tag and fallbacks"). The numeric settings are set first
-     (voxtral.set_numerics, with encoder_cache.cpu_threads threads) and recorded; then
-     the run folder.
+     release tag and fallbacks"). zeroshot.yaml is read with the train.yaml that it
+     extends (config.resolve_config), whose every key and value is checked
+     (config.TrainSettings). The numeric settings are set first (voxtral.set_numerics,
+     with encoder_cache.cpu_threads threads) and recorded; then the run folder.
   2. The embargo (pilot protocol, section "Clip versions", bullet "If a check fails"): no
      test-fold score is computed until the checks of x1 are finished. The pinned word-check
      run (wordcheck_run) must match its pin, have finished in its default mode, have read
@@ -54,8 +55,10 @@ code computes the AUROC later.
 Writes $LBW_WORKSPACE/runs/pilot/pilot-zeroshot-<YYYYmmdd-HHMMSS>/ (UTC) with
   scores.parquet  one row per segment and view: segment, session, view and z
                   (zeroshot.SCORE_COLUMNS); pinned by its SHA-256 (zeroshot_scores)
-  run.json        commit, configs, inputs (with the four cache checks and what they
-                  flagged), model, settings with the numeric ones and the prompt, seeds,
+  run.json        commit, configs (zeroshot.yaml with the train.yaml that it extends,
+                  their SHA-256s and the SHA-256 of the resolved config), inputs (with
+                  the four cache checks and what they flagged), model, settings with the
+                  resolved config, the numeric ones and the prompt, seeds,
                   environment, timings, the embargo's reading, the check's counts, the
                   watch's counts keyed by layer name and the label-free numbers per view
 A job that fails also leaves errors.log there: traceback frames and error types, never a
@@ -93,6 +96,7 @@ from listening_beyond_words.cache import (
     relative_run,
 )
 from listening_beyond_words.clips import read_view_clip
+from listening_beyond_words.config import STRICT, WARN_ONLY, TrainSettings, resolve_config
 from listening_beyond_words.models import ModelPin, load_pins, local_snapshot, snapshot_record
 from listening_beyond_words.runinfo import (
     Progress,
@@ -145,7 +149,7 @@ ZEROSHOT = Path("configs/pilot/zeroshot.yaml")
 # and for the repeatability mode that the commit recording the training timing run sets
 # there (section "Training"): strict or warn_only, until then pending.
 TRAINING = Path("configs/pilot/train.yaml")
-SET_MODES = ("strict", "warn_only")
+SET_MODES = (STRICT, WARN_ONLY)
 USAGE = "usage: score_zeroshot.py (no arguments: everything the job reads is pinned)"
 STUDY = "pilot"
 PROGRESS_EVERY = 1000  # clips between two progress lines
@@ -229,13 +233,6 @@ def run_name() -> str:
     return f"{STUDY}-{ARM}-{datetime.now(UTC):%Y%m%d-%H%M%S}"
 
 
-def repeatability_mode(path: Path) -> Any:
-    """precision.deterministic of the shared training settings; None if the file lacks it."""
-    content = yaml.safe_load(path.read_text(encoding="utf-8"))
-    precision = content.get("precision") if isinstance(content, dict) else None
-    return precision.get("deterministic") if isinstance(precision, dict) else None
-
-
 def ids_sha256(ids: Any) -> str:
     """The SHA-256 of token IDs as little-endian 64-bit integers."""
     return hashlib.sha256(ids.detach().cpu().numpy().astype("<i8").tobytes()).hexdigest()
@@ -301,10 +298,11 @@ def start(state: Progress) -> Run:
             ' zero-shot scores wait for them (pilot protocol, section "Encoder caches and'
             ' zero-shot scores")'
         )
-    mode = repeatability_mode(TRAINING)
+    zeroshot = resolve_config(ZEROSHOT)
+    mode = TrainSettings.from_config(zeroshot.shared).precision.deterministic
     if mode not in SET_MODES:
         raise StepError(
-            f"the repeatability mode of training is not set yet ({TRAINING}:"
+            f"the repeatability mode of training is not set yet ({zeroshot.shared_file}:"
             f" precision.deterministic is {mode!r}, not one of {list(SET_MODES)}): the"
             " zero-shot scores wait for the commit that records the GPU tests and the"
             ' training timing run (pilot protocol, section "Training", bullet "Order,'
@@ -313,8 +311,7 @@ def start(state: Progress) -> Run:
     started = time.monotonic()
     workspace = get_workspace()
     config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-    arm = yaml.safe_load(ZEROSHOT.read_text(encoding="utf-8"))
-    settings = ZeroshotSettings.from_config(arm)
+    settings = ZeroshotSettings.from_config(zeroshot.own)
     threads = CacheSettings.from_config(config).cpu_threads
     voxtral = load_pins(MODELS)["voxtral"]
     # First, before any model or clip: z from the cache equals z from the audio only under
@@ -334,7 +331,12 @@ def start(state: Progress) -> Run:
         "git": git,
         "config": {"file": str(CONFIG), "sha256": sha256_file(CONFIG)},
         "models_config": {"file": str(MODELS), "sha256": sha256_file(MODELS)},
-        "zeroshot_config": {"file": str(ZEROSHOT), "sha256": sha256_file(ZEROSHOT)},
+        "zeroshot_config": {
+            "file": str(ZEROSHOT),
+            "sha256": zeroshot.file_sha256,
+            "extends": {"file": str(zeroshot.shared_file), "sha256": zeroshot.shared_sha256},
+            "resolved_sha256": zeroshot.sha256,
+        },
         "slurm": {
             "job_id": job,
             "node": socket.gethostname(),
@@ -342,7 +344,7 @@ def start(state: Progress) -> Run:
             "cpus_per_task": os.environ.get("SLURM_CPUS_PER_TASK"),
         },
         "settings": {
-            "zeroshot": arm,
+            "zeroshot": zeroshot.resolved,
             "encoder_cache": config["encoder_cache"],
             "numerics": numerics,
         },

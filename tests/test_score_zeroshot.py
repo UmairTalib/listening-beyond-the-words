@@ -631,10 +631,23 @@ def test_run_json_records_the_configs_seeds_inputs_and_settings(scored: Finished
     }
     models = REPO / "configs" / "pilot" / "models.yaml"
     assert info["models_config"] == {"file": str(models), "sha256": sha256_file(models)}
-    path = zeroshot_path(workspace)
-    assert info["zeroshot_config"] == {"file": str(path), "sha256": sha256_file(path)}
+    path, training = zeroshot_path(workspace), training_path(workspace)
+    # The resolved config: zeroshot.yaml's own keys without extends, then train.yaml's.
+    shared = yaml.safe_load(training.read_text(encoding="utf-8"))
+    resolved = {key: value for key, value in FAST_ZEROSHOT.items() if key != "extends"} | shared
+    canonical = json.dumps(resolved, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert info["zeroshot_config"] == {
+        "file": str(path),
+        "sha256": sha256_file(path),
+        "extends": {"file": str(training), "sha256": sha256_file(training)},
+        "resolved_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
     settings = info["settings"]
-    assert settings["zeroshot"] == FAST_ZEROSHOT
+    assert settings["zeroshot"] == resolved
+    own = [key for key in yaml.safe_load(path.read_text(encoding="utf-8")) if key != "extends"]
+    assert list(settings["zeroshot"]) == [*own, *shared]  # in the order of the two files
+    assert settings["zeroshot"]["precision"]["deterministic"] == MODE
+    assert settings["zeroshot"]["views"] == ["x0", "x1", "rev"]  # load_zeroshot_scores reads it
     assert settings["encoder_cache"] == workspace.config["encoder_cache"]
     assert settings["numerics"] == NUMERIC_RECORD
     assert settings["width"] == WIDTH
