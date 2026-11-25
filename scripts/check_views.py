@@ -94,7 +94,7 @@ from listening_beyond_words.clips import (
     read_lines,
     read_view_clip,
 )
-from listening_beyond_words.models import ModelPin, load_pins, local_snapshot
+from listening_beyond_words.models import ModelPin, load_pins, local_snapshot, snapshot_record
 from listening_beyond_words.partitions import SEEDS
 from listening_beyond_words.recognisers import (
     Reading,
@@ -437,14 +437,6 @@ def release() -> None:
     torch = sys.modules.get("torch")
     if torch is not None and torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-
-def snapshot_record(pin: ModelPin, snapshot: Path) -> dict[str, Any]:
-    """A pinned snapshot for run.json: repo, revision and the blob that each file links to."""
-    blobs = {
-        path.name: path.readlink().name for path in sorted(snapshot.iterdir()) if path.is_symlink()
-    }
-    return {"repo_id": pin.repo_id, "revision": pin.revision, "blobs": blobs}
 
 
 def load_whisper(snapshot: Path, settings: WhisperSettings) -> Whisper:

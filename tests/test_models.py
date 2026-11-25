@@ -10,6 +10,7 @@ from listening_beyond_words.models import (
     check_weights,
     load_pins,
     local_snapshot,
+    snapshot_record,
 )
 
 PINS = Path(__file__).resolve().parents[1] / "configs" / "pilot" / "models.yaml"
@@ -55,6 +56,24 @@ def test_local_snapshot_finds_a_fetched_snapshot(tmp_path: Path) -> None:
 def test_local_snapshot_says_how_to_fetch_a_missing_snapshot(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"scripts/fetch_models\.py"):
         local_snapshot(ModelPin("m", "org/model", COMMIT), tmp_path)
+
+
+def test_snapshot_record_names_the_blob_of_each_linked_file(tmp_path: Path) -> None:
+    repo = tmp_path / "hub" / "models--org--model"
+    snapshot = repo / "snapshots" / COMMIT
+    snapshot.mkdir(parents=True)
+    (repo / "blobs").mkdir()
+    for name, blob in (("model.safetensors", "b" * 64), ("config.json", "a" * 64)):
+        (repo / "blobs" / blob).write_text(name, encoding="utf-8")
+        (snapshot / name).symlink_to(Path("..") / ".." / "blobs" / blob)
+    (snapshot / "notes.txt").write_text("a file of its own, not a blob", encoding="utf-8")
+    record = snapshot_record(ModelPin("m", "org/model", COMMIT), snapshot)
+    assert record == {
+        "repo_id": "org/model",
+        "revision": COMMIT,
+        "blobs": {"config.json": "a" * 64, "model.safetensors": "b" * 64},
+    }
+    assert list(record["blobs"]) == ["config.json", "model.safetensors"]  # by name
 
 
 def test_pilot_pins_kokoro_and_faster_whisper() -> None:

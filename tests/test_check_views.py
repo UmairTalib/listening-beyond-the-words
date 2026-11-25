@@ -59,6 +59,7 @@ from wordcheck_fakes import (
     Ears,
     FakeSmile,
     WordcheckWorkspace,
+    assert_only_aggregates_leave,
     info_of,
     make_wordcheck_workspace,
     patch_job,
@@ -72,14 +73,6 @@ FIRST_RUN = f"derived/wordcheck/run-{JOB}"
 # Participant text that must never leave the run folder: the secret word, the words of the
 # labels and a number as the text rule writes it out ("1990" in the lines).
 PRIVATE = (SECRET.lower(), *LABEL_WORDS, "nineteen ninety")
-# What would show a number per segment or participant: a segment ID, or a participant ID
-# as a key or paired with a value; and in run.json, a list as long as a fold of segments.
-SEGMENT_ID = re.compile(r"\b3\d\d_\d{3}\b")
-PARTICIPANT_PAIR = re.compile(r"[{\[,]\s*3\d\d\s*[:,]")
-NUMBER_LIST = re.compile(r"[\[(](?:\s*-?[0-9][0-9.e+-]*\s*,){7,}")  # 8 numbers or more
-ITEM_KEY = re.compile(r"3\d\d(_\d{3})?")
-LONGEST_LIST = 7  # the public guard's voices; folds and intervals are shorter
-LONG_LISTS = {("settings", "whisper_resolved", "suppress_tokens")}  # long with faster-whisper
 UNVOICED_SESSION = 305  # the participant whose parts the level-aware opensmile hears unvoiced
 
 
@@ -275,31 +268,6 @@ def pinned_design(
     voices.index = pd.Index(voices.index.astype(np.int64), name="session")
     label = labels["label"].astype(np.int64)
     return label, labels["gender"].astype(str), folds, voices.sort_index()
-
-
-def per_item_paths(node: Any, path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
-    """Where run.json could hold a number per segment or participant: IDs as keys, long lists."""
-    found: list[tuple[str, ...]] = []
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if ITEM_KEY.fullmatch(str(key)):
-                found.append((*path, str(key)))
-            found += per_item_paths(value, (*path, str(key)))
-    elif isinstance(node, list):
-        if len(node) > LONGEST_LIST and path not in LONG_LISTS:
-            found.append(path)
-        for value in node:
-            found += per_item_paths(value, path)
-    return found
-
-
-def assert_only_aggregates_leave(run_json: Path, streams: str) -> None:
-    """No ID on the streams (but on a failure line) and nothing per item in run.json."""
-    shown = "\n".join(line for line in streams.splitlines() if not line.startswith("FAILED: "))
-    assert not SEGMENT_ID.search(shown)
-    assert not PARTICIPANT_PAIR.search(shown)
-    assert not NUMBER_LIST.search(shown)
-    assert per_item_paths(json.loads(run_json.read_text(encoding="utf-8"))) == []
 
 
 # The default mode ----------------------------------------------------------------------------

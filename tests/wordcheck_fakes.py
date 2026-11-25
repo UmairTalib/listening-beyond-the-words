@@ -6,11 +6,14 @@ manifests, the public files of a tool check and model snapshots that hold no mod
 Fake ASR systems hear a clip by its samples; a fake opensmile gives values from a hash of
 each stretch of audio. Synthetic data only, on pilot session IDs, because transcript
 lines are read through the session guard. The lines hold SECRET (x1_fakes), which stands
-for participant text: only transcripts.parquet may hold it.
+for participant text: only transcripts.parquet may hold it. The tests of every job that
+reads participant clips reuse the workspace and the check of what may leave OMNI
+(assert_only_aggregates_leave).
 """
 
 import hashlib
 import json
+import re
 import shutil
 import sys
 import weakref
@@ -544,3 +547,50 @@ def run_job(
 
 def info_of(run: Path) -> dict:
     return json.loads((run / "run.json").read_text(encoding="utf-8"))
+
+
+# What may leave OMNI ----------------------------------------------------------------------------
+
+# What would show a number per segment or participant: a segment ID, or a participant ID
+# as a key or paired with a value; and in run.json, a list as long as a fold of segments.
+SEGMENT_ID = re.compile(r"\b3\d\d_\d{3}\b")
+PARTICIPANT_PAIR = re.compile(r"[{\[,]\s*3\d\d\s*[:,]")
+NUMBER_LIST = re.compile(r"[\[(](?:\s*-?[0-9][0-9.e+-]*\s*,){7,}")  # 8 numbers or more
+ITEM_KEY = re.compile(r"3\d\d(_\d{3})?")
+LONGEST_LIST = 7  # the public guard's voices; folds and intervals are shorter
+LONG_LISTS = {("settings", "whisper_resolved", "suppress_tokens")}  # long with faster-whisper
+
+
+def per_item_paths(node: Any, path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    """Where run.json could hold a number per segment or participant: IDs as keys, long lists."""
+    found: list[tuple[str, ...]] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if ITEM_KEY.fullmatch(str(key)):
+                found.append((*path, str(key)))
+            found += per_item_paths(value, (*path, str(key)))
+    elif isinstance(node, list):
+        if len(node) > LONGEST_LIST and path not in LONG_LISTS:
+            found.append(path)
+        for value in node:
+            found += per_item_paths(value, path)
+    return found
+
+
+def assert_only_aggregates_leave(run_json: Path, streams: str) -> None:
+    """No ID on the streams (but on a failure line), and none in run.json (but in its error).
+
+    Shared by the tests of every job that reads participant clips. A failure may name its
+    segment on its one ``FAILED:`` line and in ``run.json``'s ``error``, on OMNI only.
+    Elsewhere in ``run.json`` no ID may appear, as a key or as a value, and no list is
+    long enough to hold a number per item; values keyed by a layer's name are aggregates.
+    """
+    shown = "\n".join(line for line in streams.splitlines() if not line.startswith("FAILED: "))
+    assert not SEGMENT_ID.search(shown)
+    assert not PARTICIPANT_PAIR.search(shown)
+    assert not NUMBER_LIST.search(shown)
+    info = json.loads(run_json.read_text(encoding="utf-8"))
+    assert per_item_paths(info) == []
+    rest = json.dumps({key: value for key, value in info.items() if key != "error"})
+    assert not SEGMENT_ID.search(rest)
+    assert not PARTICIPANT_PAIR.search(rest)

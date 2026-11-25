@@ -2,8 +2,9 @@
 
 ``configs/pilot/models.yaml`` lists the pins. ``scripts/fetch_models.py`` downloads
 them on an OMNI login node into the workspace's Hugging Face folder, and jobs load
-them from there without network access. ``check_weights`` tells whether a loaded
-model holds every weight of its file.
+them from there without network access and record which files they loaded
+(``snapshot_record``). ``check_weights`` tells whether a loaded model holds every
+weight of its file.
 """
 
 import re
@@ -93,6 +94,26 @@ def local_snapshot(pin: ModelPin, hf_home: Path) -> Path:
             "fetch it on a login node with: python scripts/fetch_models.py"
         )
     return folder
+
+
+def snapshot_record(pin: ModelPin, snapshot: Path) -> dict[str, Any]:
+    """Describe a fetched snapshot for ``run.json``: its repo, revision and file blobs.
+
+    In the Hugging Face cache each file of a snapshot is a link to a blob named by the
+    file's hash, so the blobs say exactly which files a step loaded.
+
+    Args:
+        pin: The model pin.
+        snapshot: The snapshot folder (``local_snapshot``).
+
+    Returns:
+        ``repo_id``, ``revision`` and ``blobs``: for each linked file of the folder, by
+        name, the name of the blob it links to.
+    """
+    blobs = {
+        path.name: path.readlink().name for path in sorted(snapshot.iterdir()) if path.is_symlink()
+    }
+    return {"repo_id": pin.repo_id, "revision": pin.revision, "blobs": blobs}
 
 
 @dataclass(frozen=True, slots=True)
