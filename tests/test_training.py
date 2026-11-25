@@ -581,15 +581,21 @@ def test_a_bag_with_the_two_chunk_clip_gives_the_gradients_of_one_clip_calls(
     assert (first.calls, second.calls) == (14, 48)
     assert not first.skipped
     assert not second.skipped
-    assert first.loss == pytest.approx(second.loss, rel=1e-6)
+    # The forward and backward passes run in fp16, and a call of four clips rounds its
+    # products otherwise than four calls of one, by CPU (other kernels and blocking). So the
+    # loss agrees within fp16's unit roundoff, 2^-10: it moved by less than 1e-6 on arm64,
+    # 1.9e-5 and 0 on two OMNI nodes, and 1.0e-4 on the CI runner (x86_64).
+    assert first.loss == pytest.approx(second.loss, rel=2.0**-10)
     # The fp16 backward sums four clips' gradients in one product instead of four, so the
-    # last bits differ: on the tiny model at most 8.2e-4 of each tensor's largest value.
+    # last bits differ: on the tiny model at most 8.2e-4 (arm64) and 5.9e-4 (an OMNI node)
+    # of each tensor's largest value. The bound, 1e-2, is about ten times fp16's roundoff;
+    # a wrong weight of a clip moves a gradient by several percent.
     for name, value in training._trained(grouped.trainable.model):
         other = dict(training._trained(single.trainable.model))[name].grad
         assert other is not None
         assert value.grad is not None
         largest = float(other.abs().max())
-        assert float((value.grad - other).abs().max()) <= 4e-3 * largest, name
+        assert float((value.grad - other).abs().max()) <= 1e-2 * largest, name
     # The long clip's z gets the gain's share: a quarter of its push on the bag mean.
     _, _, z = next(item for item in seen if item[:2] == ("x0", 9001))
     assert z.numel() == 4
