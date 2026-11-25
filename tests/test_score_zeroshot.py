@@ -30,7 +30,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from listening_beyond_words import voxtral
+from listening_beyond_words import scoring, voxtral
 from listening_beyond_words.cache import NUMERICS, CacheSettings, read_file
 from listening_beyond_words.clips import MANIFEST_COLUMNS, write_view
 from listening_beyond_words.models import load_pins, local_snapshot
@@ -808,10 +808,10 @@ def test_the_finished_run_once_pinned_passes_load_zeroshot_scores(scored: Finish
 def plant_z(
     segment: str, view: str, value: float
 ) -> Callable[[ModuleType, pytest.MonkeyPatch], None]:
-    """Make the job's cached_score give one value for one segment of one view."""
+    """Make the scoring code's cached_score give one value for one segment of one view."""
 
     def prepare(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-        real_read, real_score = module.read_file, module.cached_score
+        real_read, real_score = scoring.read_file, scoring.cached_score
         last: dict[str, Path] = {}
 
         def read(path: Path, row: Any, width: int) -> Any:
@@ -823,8 +823,8 @@ def plant_z(
             path = last["path"]
             return value if (path.stem, path.parents[2].name) == (segment, view) else z
 
-        monkeypatch.setattr(module, "read_file", read)
-        monkeypatch.setattr(module, "cached_score", score)
+        monkeypatch.setattr(scoring, "read_file", read)
+        monkeypatch.setattr(scoring, "cached_score", score)
 
     return prepare
 
@@ -884,7 +884,7 @@ def test_a_planted_check_mismatch_fails_the_job_before_any_other_score(
     small: WordcheckWorkspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     module = load_script("score_zeroshot")
-    real = module.cached_score
+    real = scoring.cached_score
     calls: list[int] = []
 
     def nudged(*args: Any) -> float:  # the first z from the cache, one step off
@@ -892,7 +892,7 @@ def test_a_planted_check_mismatch_fails_the_job_before_any_other_score(
         calls.append(1)
         return math.nextafter(z, math.inf) if len(calls) == 1 else z
 
-    monkeypatch.setattr(module, "cached_score", nudged)
+    monkeypatch.setattr(scoring, "cached_score", nudged)
     model = Model()
     info, out = failed(small, monkeypatch, capsys, model=model, module=module)
     n = checked(small)
@@ -1000,7 +1000,11 @@ def replace_z(
     name: str,
     change: Callable[[int, float], float],
 ) -> None:
-    """Let one of the job's scoring functions give change(call number, z) instead of z."""
+    """Let a scoring function give change(call number, z) instead of z.
+
+    The job's own yes_no_score is patched in the job's module; cached_score in the scoring
+    code that the job calls (listening_beyond_words.scoring).
+    """
     real = getattr(module, name)
     calls = [0]
 
@@ -1016,7 +1020,7 @@ def test_a_zero_of_the_other_sign_fails_the_check_which_compares_bits(
 ) -> None:
     module = load_script("score_zeroshot")
     replace_z(module, monkeypatch, "yes_no_score", lambda call, z: 0.0 if call == 1 else z)
-    replace_z(module, monkeypatch, "cached_score", lambda call, z: -0.0 if call == 1 else z)
+    replace_z(scoring, monkeypatch, "cached_score", lambda call, z: -0.0 if call == 1 else z)
     info, _ = failed(small, monkeypatch, capsys, module=module)
     check = info["results"]["check"]["views"]["x0"]
     assert (check["z_equal"], check["non_finite"]) == (check["segments"] - 1, 0)
@@ -1026,8 +1030,8 @@ def test_a_z_that_is_not_finite_fails_the_check_though_both_paths_give_it(
     small: WordcheckWorkspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     module = load_script("score_zeroshot")
-    for name in ("yes_no_score", "cached_score"):  # the same NaN, bit for bit, on both paths
-        replace_z(module, monkeypatch, name, lambda call, z: math.nan if call == 1 else z)
+    for target, name in ((module, "yes_no_score"), (scoring, "cached_score")):  # the same NaN
+        replace_z(target, monkeypatch, name, lambda call, z: math.nan if call == 1 else z)
     info, _ = failed(small, monkeypatch, capsys, module=module)
     check = info["results"]["check"]["views"]["x0"]
     assert (check["z_equal"], check["non_finite"]) == (check["segments"] - 1, 1)
@@ -1043,7 +1047,7 @@ def test_a_z_that_is_not_finite_fails_the_job_without_a_flag_and_writes_no_score
     module = load_script("score_zeroshot")
     second = checked(small) + 2  # the second clip after the check
     replace_z(
-        module, monkeypatch, "cached_score", lambda call, z: math.inf if call == second else z
+        scoring, monkeypatch, "cached_score", lambda call, z: math.inf if call == second else z
     )
     info, out = failed(small, monkeypatch, capsys, module=module)
     message = (
@@ -1065,7 +1069,7 @@ def test_a_row_of_the_check_sample_scored_otherwise_later_fails_the_job_and_writ
     # Its call in the full pass, which scores x0 first, by segment.
     call = n + list(cache_manifest(small, "x0")["segment"]).index(first) + 1
     replace_z(
-        module,
+        scoring,
         monkeypatch,
         "cached_score",
         lambda number, z: math.nextafter(z, math.inf) if number == call else z,
@@ -1091,7 +1095,7 @@ def test_every_row_of_the_check_sample_is_compared_with_its_z_from_the_audio(
     before = sum(len(cache_manifest(small, other)) for other in VIEWS[:-1])
     call = n + before + list(cache_manifest(small, view)["segment"]).index(last) + 1
     replace_z(
-        module,
+        scoring,
         monkeypatch,
         "cached_score",
         lambda number, z: math.nextafter(z, math.inf) if number == call else z,

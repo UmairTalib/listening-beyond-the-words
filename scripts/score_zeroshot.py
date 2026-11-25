@@ -21,12 +21,12 @@ Stages, in one process:
      extends (config.resolve_config), whose every key and value is checked
      (config.TrainSettings). The numeric settings are set first (voxtral.set_numerics,
      with encoder_cache.cpu_threads threads) and recorded; then the run folder.
-  2. The embargo (pilot protocol, section "Clip versions", bullet "If a check fails"): no
-     test-fold score is computed until the checks of x1 are finished. The pinned word-check
-     run (wordcheck_run) must match its pin, have finished in its default mode, have read
-     the pinned clips of x1 and rev, which the caches were built from, and hold x1 words
-     PASS, a verdict on x1's voice (PASS or FAIL) and F4 PASS. Anything else refuses: a
-     later fallback brings its own code.
+  2. The embargo (scoring.embargo; pilot protocol, section "Clip versions", bullet "If a
+     check fails"): no test-fold score is computed until the checks of x1 are finished.
+     The pinned word-check run (wordcheck_run) must match its pin, have finished in its
+     default mode, have read the pinned clips of x1 and rev, which the caches were built
+     from, and hold x1 words PASS, a verdict on x1's voice (PASS or FAIL) and F4 PASS.
+     Anything else refuses: a later fallback brings its own code.
   3. The pinned caches of all four clip versions with their checks (cache.pinned_cache).
      Each check watched the language model on the longest clips of its version, x2's too,
      before any score exists; a flag there stops the job before the model loads, since no
@@ -38,10 +38,12 @@ Stages, in one process:
   4. The check: check.segments_per_view segments of each view drawn with
      item_seed(seed, "zeroshot", view), plus every segment of two chunks
      (zeroshot.check_sample), scored from the audio (voxtral.yes_no_score), then, with the
-     encoder swapped for the pass-through, from the cache (voxtral.cached_score). Every z
-     must be finite and the two must agree bit for bit (float.hex); otherwise the job stops
-     with counts only and scores nothing else. A flagged part stops it here too.
-  5. Every segment of each view scored from the cache, one clip per call. A flagged part (a
+     encoder swapped for the pass-through, from the cache (scoring.score_views, which calls
+     voxtral.cached_score). Every z must be finite and the two must agree bit for bit
+     (float.hex); otherwise the job stops with counts only and scores nothing else. A
+     flagged part stops it here too.
+  5. Every segment of each view scored from the cache, one clip per call
+     (scoring.score_views, the scoring code that the trained runs share). A flagged part (a
      value at the clamp, |x| >= 64,512, or a value that is not finite, the logits
      included) or a z that is not finite ends the run failed with counts only, and no score
      is written: the job runs again under the protocol's fallback (the flagged layers in
@@ -69,11 +71,9 @@ FAILED line and in run.json's error.
 
 import contextlib
 import hashlib
-import json
 import math
 import os
 import socket
-import subprocess
 import sys
 import time
 from collections.abc import Mapping
@@ -87,14 +87,7 @@ import pandas as pd
 import soundfile as sf
 import yaml
 
-from listening_beyond_words.cache import (
-    CacheSettings,
-    PinnedCache,
-    features_sha256,
-    pinned_cache,
-    read_file,
-    relative_run,
-)
+from listening_beyond_words.cache import CacheSettings, PinnedCache, features_sha256, pinned_cache
 from listening_beyond_words.clips import read_view_clip
 from listening_beyond_words.config import STRICT, WARN_ONLY, TrainSettings, resolve_config
 from listening_beyond_words.models import ModelPin, load_pins, local_snapshot, snapshot_record
@@ -103,13 +96,22 @@ from listening_beyond_words.runinfo import (
     StepError,
     environment,
     git_state,
+    gpu_facts,
     item_seed,
+    peak_memory_gb,
     quiet_unraisable,
     record_failure,
     sha256_file,
     stop_on_sigterm,
     utc_now,
     write_json,
+)
+from listening_beyond_words.scoring import (
+    EMBARGO_VIEWS,
+    embargo,
+    label_free,
+    score_views,
+    watch_summary,
 )
 from listening_beyond_words.settings import Workspace, get_workspace
 from listening_beyond_words.voxtral import (
@@ -119,7 +121,6 @@ from listening_beyond_words.voxtral import (
     LayerWatch,
     LoadedModel,
     answer_token_ids,
-    cached_score,
     clip_inputs,
     language_model_layers,
     load_model,
@@ -130,11 +131,9 @@ from listening_beyond_words.voxtral import (
     watch_layers,
     yes_no_score,
 )
-from listening_beyond_words.wordcheck import FAIL, PASS
 from listening_beyond_words.zeroshot import (
     ARM,
     SAMPLE_STREAM,
-    SCORE_COLUMNS,
     SCORES,
     STEP,
     ZeroshotSettings,
@@ -153,15 +152,9 @@ SET_MODES = (STRICT, WARN_ONLY)
 USAGE = "usage: score_zeroshot.py (no arguments: everything the job reads is pinned)"
 STUDY = "pilot"
 PROGRESS_EVERY = 1000  # clips between two progress lines
-LARGEST = 5  # the layer maxima that are printed
-WORDCHECK_STEP = "check_views"  # scripts/check_views.py writes the word-check runs ...
-WORDCHECK_MODE = "sample"  # ... and this is its default mode
-# The views whose checks lift the embargo: the word and voice rules of x1, and F4 on rev.
-EMBARGO_VIEWS = ("x1", "rev")
 # Every cached clip version: the check of each one watched the language model on its
 # longest clips before any score exists, x2's too, though x2 is never scored.
 CHECKED_VIEWS = ("x0", "x1", "x2", "rev")
-EMBARGO_VERDICTS = ("f4", "x1_words", "x1_voice")
 PACKAGES = (
     "torch",
     "transformers",
@@ -179,48 +172,6 @@ PACKAGES = (
 
 
 # The machine -------------------------------------------------------------------------------
-
-
-def gpu_facts() -> dict[str, Any]:
-    """The GPU of this job, its driver, CUDA and cuDNN. PyTorch is imported here."""
-    import torch
-
-    if not torch.cuda.is_available():
-        return {"gpu": None, "cuda": torch.version.cuda, "cudnn": None, "driver": None}
-    properties = torch.cuda.get_device_properties(0)
-    return {
-        "gpu": torch.cuda.get_device_name(0),
-        "gpu_capability": f"{properties.major}.{properties.minor}",
-        "gpu_memory_gb": round(properties.total_memory / 1e9, 2),
-        "cuda": torch.version.cuda,
-        "cudnn": torch.backends.cudnn.version(),
-        "driver": driver_version(),
-    }
-
-
-def driver_version() -> str | None:
-    """The NVIDIA driver's version, as nvidia-smi gives it; None if it cannot say."""
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    lines = result.stdout.strip().splitlines()
-    return lines[0].strip() if lines else None
-
-
-def peak_memory_gb() -> float | None:
-    """The most GPU memory that PyTorch held so far, in GB; None without a GPU."""
-    import torch
-
-    if not torch.cuda.is_available():
-        return None
-    return round(torch.cuda.max_memory_allocated() / 1e9, 2)
 
 
 def utc_in(seconds: float) -> str:
@@ -382,79 +333,6 @@ def start(state: Progress) -> Run:
     return run
 
 
-# Stage 2: the embargo -----------------------------------------------------------------------
-
-
-def embargo(workspace: Workspace, config: Mapping[str, Any]) -> dict[str, Any]:
-    """Stage 2: refuse unless the pinned word-check run shows the checks of x1 finished.
-
-    The run must match its pin (wordcheck_run, by its transcripts.parquet), come from the
-    word check's default mode, say done, list the pinned file, have read the pinned clips
-    of x1 and rev (view_runs; cache.pinned_cache then refuses a cache not built
-    from them), and hold x1 words PASS, a verdict on x1's voice and F4 PASS.
-
-    Returns:
-        The reading for run.json: the run, its SHA-256s, the view pins compared and the
-        three verdicts.
-    """
-    pin = config.get("wordcheck_run")
-    if not isinstance(pin, Mapping) or not pin.get("run") or not pin.get("sha256"):
-        raise StepError(
-            "no word-check run is pinned (wordcheck_run): no test-fold score is computed"
-            " until the checks of x1 are finished"
-        )
-    name = relative_run(workspace, pin["run"])
-    folder = workspace.root / name
-    transcripts = folder / "transcripts.parquet"
-    if not transcripts.is_file() or sha256_file(transcripts) != pin["sha256"]:
-        raise StepError(
-            f"the pinned word-check run {name}: its transcripts.parquet does not match the pin"
-            " (wordcheck_run)"
-        )
-    path = folder / "run.json"
-    info = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    mode = (info.get("mode") or {}).get("name")
-    if info.get("step") != WORDCHECK_STEP or mode != WORDCHECK_MODE:
-        raise StepError(f"{name} is not a run of the word check in its default mode")
-    if info.get("status") != "done":
-        raise StepError(f"{name} did not finish: its run.json does not say done")
-    if (info.get("outputs") or {}).get("transcripts.parquet") != pin["sha256"]:
-        raise StepError(f"{name}: its run.json lists another transcripts.parquet than the pin")
-    read = (info.get("inputs") or {}).get("views") or {}
-    views = {}
-    for view in EMBARGO_VIEWS:
-        pinned = (config.get("view_runs") or {}).get(view)
-        if not isinstance(pinned, Mapping):
-            raise StepError(f"no clips of {view} are pinned (view_runs)")
-        views[view] = {"file": pinned["run"], "sha256": pinned["sha256"]}
-        if read.get(view) != views[view]:
-            raise StepError(
-                f"{name} checked other clips of {view} than the pinned ones (view_runs.{view}),"
-                " from which the caches are built"
-            )
-    verdicts = info.get("verdicts") or {}
-    found = {key: (verdicts.get(key) or {}).get("verdict") for key in EMBARGO_VERDICTS}
-    if found["x1_words"] != PASS:
-        raise StepError(
-            f"{name}: the words of x1 say {found['x1_words']}, not {PASS}; the checks of x1 are"
-            " finished only after the re-check that the protocol sets, which brings its own code"
-        )
-    if found["x1_voice"] not in (PASS, FAIL):
-        raise StepError(f"{name} holds no verdict on the voice of x1 ({found['x1_voice']})")
-    if found["f4"] != PASS:
-        raise StepError(
-            f"{name}: check F4 says {found['f4']}, not {PASS}; rev is scored only once it has"
-            " passed, and a backup or a leakage rerun brings its own code"
-        )
-    return {
-        "run": name,
-        "sha256": pin["sha256"],
-        "run_json_sha256": sha256_file(path),
-        "views": views,
-        "verdicts": found,
-    }
-
-
 # Stage 3: the caches and the model ------------------------------------------------------------
 
 
@@ -576,17 +454,6 @@ def prompts_of(
 # The overflow watch ---------------------------------------------------------------------------
 
 
-def watch_summary(watch: LayerWatch) -> dict[str, Any]:
-    """What a layer watch saw: the flagged parts, the largest values and the counts by layer."""
-    layers = watch.record()
-    return {
-        "parts": sum(len(parts) for parts in layers.values()),
-        "flagged": watch.flagged(),
-        "largest": [[name, value] for name, value in watch.largest(LARGEST)],
-        "layers": layers,
-    }
-
-
 def judge_watch(run: Run, watch: LayerWatch, non_finite: int, after: str) -> None:
     """Record the watch's counts; stop, writing no score, on a flagged part or a non-finite z."""
     summary = watch_summary(watch)
@@ -654,38 +521,6 @@ def from_audio(
     return scores, same
 
 
-def from_cache(
-    run: Run,
-    cache: PinnedCache,
-    segments: list[str],
-    loaded: LoadedModel,
-    prompts: Mapping[int, Mapping[str, Any]],
-    answer_ids: tuple[int, int],
-    state: Progress,
-    progress: dict[str, Any] | None = None,
-) -> list[float]:
-    """z of some segments of one view from their stored encoder outputs, one clip per call."""
-    width = int(run.info["settings"]["width"])
-    stored = {str(row.segment): row for row in cache.manifest.itertuples(index=False)}
-    scores = []
-    for segment in segments:
-        state.segment = segment
-        row = stored[segment]
-        output = read_file(cache.run.folder / str(row.file), row, width)
-        scores.append(cached_score(loaded.model, prompts[int(row.chunks)], output, answer_ids))
-        if progress is not None:
-            progress["done"] += 1
-            done, total = progress["done"], progress["total"]
-            if done % PROGRESS_EVERY == 0 and done < total:
-                elapsed = time.monotonic() - progress["clock"]
-                print(
-                    f"scores: {done:,} of {total:,}, {done / elapsed:.1f} per second;"
-                    f" projected end {utc_in(elapsed / done * (total - done))}"
-                )
-    state.segment = None
-    return scores
-
-
 def judge_check(
     run: Run,
     caches: Mapping[str, PinnedCache],
@@ -730,20 +565,6 @@ def judge_check(
         )
 
 
-def label_free(z: np.ndarray) -> dict[str, Any]:
-    """The numbers of one view's z that need no label (pilot protocol: no AUROC here)."""
-    return {
-        "count": int(z.size),
-        "all_finite": bool(np.isfinite(z).all()),
-        "mean": float(z.mean()),
-        "sd": float(z.std()),  # the population SD
-        "p5": float(np.percentile(z, 5)),
-        "p50": float(np.percentile(z, 50)),
-        "p95": float(np.percentile(z, 95)),
-        "share_above_0": float((z > 0).mean()),
-    }
-
-
 def score(run: Run, state: Progress) -> None:
     """Stages 2 to 6, after stage 1."""
     reading = embargo(run.workspace, run.config)  # 2
@@ -767,18 +588,19 @@ def score(run: Run, state: Progress) -> None:
         for view, cache in caches.items()
     }
     results = run.info["results"]
+    width = int(run.info["settings"]["width"])
     with watch_layers(language_model_layers(loaded.model, logits=True)) as watch:
         clock = time.monotonic()  # 4
         audio, same = from_audio(run, caches, samples, loaded, prompts, answer_ids, state)
         encoder = use_cached_encoder(loaded.model)
         try:
+            checked = score_views(
+                loaded.model, caches, prompts, answer_ids, width, segments=samples, state=state
+            )
             cached = {
-                (view, segment): z
-                for view, cache in caches.items()
-                for segment, z in zip(
-                    samples[view],
-                    from_cache(run, cache, list(samples[view]), loaded, prompts, answer_ids, state),
-                    strict=True,
+                (str(view), str(segment)): float(z)
+                for view, segment, z in zip(
+                    checked["view"], checked["segment"], checked["z"], strict=True
                 )
             }
             judge_check(run, caches, samples, audio, cached, same, time.monotonic() - clock)
@@ -786,26 +608,21 @@ def score(run: Run, state: Progress) -> None:
 
             clock = time.monotonic()  # 5
             total = sum(len(cache.manifest) for cache in caches.values())
-            progress = {"done": 0, "total": total, "clock": clock}
-            parts = []
-            for view, cache in caches.items():
-                segments = [str(segment) for segment in cache.manifest["segment"]]
-                z = from_cache(run, cache, segments, loaded, prompts, answer_ids, state, progress)
-                parts.append(
-                    pd.DataFrame(
-                        {
-                            "segment": segments,
-                            "session": cache.manifest["session"].astype(np.int64).to_numpy(),
-                            "view": view,
-                            "z": np.asarray(z, dtype=np.float64),
-                        },
-                        columns=list(SCORE_COLUMNS),
+
+            def progress(done: int) -> None:
+                if done % PROGRESS_EVERY == 0 and done < total:
+                    elapsed = time.monotonic() - clock
+                    print(
+                        f"scores: {done:,} of {total:,}, {done / elapsed:.1f} per second;"
+                        f" projected end {utc_in(elapsed / done * (total - done))}"
                     )
-                )
+
+            table = score_views(
+                loaded.model, caches, prompts, answer_ids, width, state=state, on_clip=progress
+            )
         finally:
             restore_encoder(loaded.model, encoder)
     seconds = time.monotonic() - clock
-    table = pd.concat(parts, ignore_index=True)
     non_finite = int((~np.isfinite(table["z"].to_numpy())).sum())
     results["scoring"] = {
         "clips": len(table),

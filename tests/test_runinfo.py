@@ -9,11 +9,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from listening_beyond_words import runinfo
 from listening_beyond_words.runinfo import (
     check_sha256,
+    driver_version,
     environment,
     git_state,
+    gpu_facts,
     item_seed,
+    peak_memory_gb,
     seed_everything,
     sha256_file,
     utc_stamp,
@@ -437,3 +441,32 @@ def test_git_state_describes_commits_after_a_tag_and_a_dirty_checkout(clone: Pat
     assert state["release_tags"] == ["v0.1.0"]  # ... still sees it
     assert (state["tags"], state["dirty"]) == ([], False)
     assert state["describe"] == git(clone, "rev-parse", "--short", "HEAD")
+
+
+# The machine ---------------------------------------------------------------------------------
+
+
+def test_without_a_gpu_the_machine_facts_say_so() -> None:
+    import torch
+
+    if torch.cuda.is_available():
+        pytest.skip("this machine has a GPU")
+    assert gpu_facts() == {"gpu": None, "cuda": torch.version.cuda, "cudnn": None, "driver": None}
+    assert peak_memory_gb() is None
+
+
+def test_driver_version_reads_nvidia_smi_and_gives_none_when_it_cannot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def answer(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert args == ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"]
+        return subprocess.CompletedProcess(args, 0, stdout="550.54.15\n550.54.15\n")
+
+    monkeypatch.setattr(runinfo.subprocess, "run", answer)
+    assert driver_version() == "550.54.15"
+
+    def missing(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(runinfo.subprocess, "run", missing)
+    assert driver_version() is None

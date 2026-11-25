@@ -60,7 +60,6 @@ import hashlib
 import math
 import os
 import socket
-import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -99,7 +98,9 @@ from listening_beyond_words.runinfo import (
     StepError,
     environment,
     git_state,
+    gpu_facts,
     item_seed,
+    peak_memory_gb,
     quiet_unraisable,
     record_failure,
     sha256_file,
@@ -179,48 +180,6 @@ def parse_mode(argv: Sequence[str]) -> Mode:
     ):
         return Mode(VERIFY_MODE, runs=tuple(runs))
     raise StepError(USAGE)
-
-
-def gpu_facts() -> dict[str, Any]:
-    """The GPU of this job, its driver, CUDA and cuDNN. PyTorch is imported here."""
-    import torch
-
-    if not torch.cuda.is_available():
-        return {"gpu": None, "cuda": torch.version.cuda, "cudnn": None, "driver": None}
-    properties = torch.cuda.get_device_properties(0)
-    return {
-        "gpu": torch.cuda.get_device_name(0),
-        "gpu_capability": f"{properties.major}.{properties.minor}",
-        "gpu_memory_gb": round(properties.total_memory / 1e9, 2),
-        "cuda": torch.version.cuda,
-        "cudnn": torch.backends.cudnn.version(),
-        "driver": driver_version(),
-    }
-
-
-def driver_version() -> str | None:
-    """The NVIDIA driver's version, as nvidia-smi gives it; None if it cannot say."""
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    lines = result.stdout.strip().splitlines()
-    return lines[0].strip() if lines else None
-
-
-def peak_memory_gb() -> float | None:
-    """The most GPU memory that PyTorch held so far, in GB; None without a GPU."""
-    import torch
-
-    if not torch.cuda.is_available():
-        return None
-    return round(torch.cuda.max_memory_allocated() / 1e9, 2)
 
 
 def utc_in(seconds: float) -> str:

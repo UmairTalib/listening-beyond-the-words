@@ -1,8 +1,8 @@
 """What every step records about itself: time, commit, seeds, file hashes, run.json and errors.
 
-It also asks PyTorch for repeatable kernels (``deterministic_torch``) and seeds every
-random number generator of a process (``seed_everything``); torch is imported inside
-those functions only.
+It also asks PyTorch for repeatable kernels (``deterministic_torch``), seeds every
+random number generator of a process (``seed_everything``) and says what GPU a job runs
+on (``gpu_facts``, ``peak_memory_gb``); torch is imported inside those functions only.
 """
 
 import hashlib
@@ -210,6 +210,54 @@ def environment(packages: Sequence[str]) -> dict[str, object]:
         "cpu": cpu,
         "uv_lock_sha256": sha256_file(LOCK_FILE) if LOCK_FILE.is_file() else None,
     }
+
+
+def gpu_facts() -> dict[str, Any]:
+    """Return the GPU of this process, its driver, CUDA and cuDNN, for a job's ``run.json``.
+
+    Returns:
+        ``gpu`` (its name, or None without a GPU), ``cuda`` and, with a GPU,
+        ``gpu_capability``, ``gpu_memory_gb``, ``cudnn`` and ``driver``
+        (``driver_version``); without one ``cudnn`` and ``driver`` are None.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return {"gpu": None, "cuda": torch.version.cuda, "cudnn": None, "driver": None}
+    properties = torch.cuda.get_device_properties(0)
+    return {
+        "gpu": torch.cuda.get_device_name(0),
+        "gpu_capability": f"{properties.major}.{properties.minor}",
+        "gpu_memory_gb": round(properties.total_memory / 1e9, 2),
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "driver": driver_version(),
+    }
+
+
+def driver_version() -> str | None:
+    """Return the NVIDIA driver's version, as nvidia-smi gives it; None if it cannot say."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = result.stdout.strip().splitlines()
+    return lines[0].strip() if lines else None
+
+
+def peak_memory_gb() -> float | None:
+    """Return the most GPU memory that PyTorch held so far, in GB; None without a GPU."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+    return round(torch.cuda.max_memory_allocated() / 1e9, 2)
 
 
 class StepError(Exception):
