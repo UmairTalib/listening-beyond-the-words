@@ -63,6 +63,8 @@ voxtral.py       Voxtral loading, prompt and score, the cache path (the encoder'
                  the pass-through, the score from a stored output) and the overflow watch
 cache.py         the stored encoder outputs: .npy files, their manifest, the check's
                  sample and the pinned cache runs with their checks
+zeroshot.py      the zero-shot scores: their settings, the check's sample and the reader
+                 of the pinned scores
 espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 
@@ -77,6 +79,7 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - The encoder caches are one GPU job, `build_caches.py` (job file `scripts/slurm/build_caches.sbatch`, job name `lbw-build-caches`), with two modes, whose options name a pinned view or earlier runs, never a setting (section 5):
   - `--view <view>` runs Voxtral's frozen audio encoder on every clip of the pinned view, one clip per call, and writes its outputs in fp16 to `cache/<view>/run-<job id>/` (section 6), with a `manifest.parquet` that the pin `cache_runs` names by its SHA-256;
   - `--verify cache/<view>/run-<job id> ...` computes the log-mel features and the encoder outputs of a sample of each named cache run again from the audio and compares them byte for byte, then runs the language model without its output layer on the longest clips with the overflow watch on. It writes only `derived/cache_check/run-<job id>/run.json`, which a pin of `cache_runs` names as its `verified_by`. A flag in the language model leaves the caches standing; `cache.pinned_cache` passes it on to the jobs that score.
+- The zero-shot scores are one GPU job, `score_zeroshot.py` (job file `scripts/slurm/score_zeroshot.sbatch`, job name `lbw-score-zeroshot`), which takes no option. It refuses to run until the rules of the training code are dated (`configs/pilot/train.yaml` exists) and the pinned word-check run shows the checks of `x1` finished, and while the check of any of the four caches flagged the language model. It scores a check sample from the audio and from the cache, which must agree bit for bit, and then scores every segment of `x0`, `x1` and `rev` from the pinned caches. It writes `runs/pilot/pilot-zeroshot-<YYYYmmdd-HHMMSS>/`, the run name of section 4 without round and fold, whose `scores.parquet` the pin `zeroshot_scores` names by its SHA-256. It reads no label.
 - Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
@@ -221,14 +224,15 @@ $LBW_WORKSPACE/
   views/<view>/           clip versions (FLAC): x0, x1, x2, rev
   cache/<view>/           frozen-encoder outputs: run-<job id>/<session>/<segment>.npy in
                           fp16, listed in the run's manifest.parquet
-  runs/<study>/<run_id>/  checkpoints, metrics.jsonl, run.log, scores, run.json
+  runs/<study>/<run_id>/  checkpoints, metrics.jsonl, run.log, scores, run.json; the
+                          zero-shot scores in runs/pilot/pilot-zeroshot-<time>/
   hf/                     pinned model snapshots (HF_HOME)
   logs/slurm/             Slurm logs
   env/                    environment, uv cache and espeak-ng, rebuilt by scripts/setup_omni_env.sh
 ```
 
 - A workspace expires after 30 days and allows 3 extensions. Extend it with `ws_extend` before it expires. It has no backup. Everything except `edaic/raw/` and `daicwoz/raw/` can be rebuilt from git and the raw data, but `x1` not bit for bit: Kokoro's renders depend on the CPU and the number of threads.
-- Before the last extension runs out, allocate a new workspace, copy `edaic/`, `daicwoz/`, `derived/` and `views/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again. Copy `cache/` too once it holds pinned runs: a cache built again is a new run, which needs its check and its pin again.
+- Before the last extension runs out, allocate a new workspace, copy `edaic/`, `daicwoz/`, `derived/` and `views/`, update `LBW_WORKSPACE` and run `scripts/setup_omni_env.sh` again. Copy `cache/` and `runs/` too once they hold pinned runs: a cache built again is a new run, which needs its check and its pin again.
 
 ## 7. Data protection
 
@@ -311,7 +315,7 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`, and a tiny random Voxtral with a stand-in for its processor in `tests/voxtral_fakes.py`. The tests of the encoder caches reuse the word check's workspace. `tests/wordcheck_fakes.py` also holds the check of what may leave OMNI, `assert_only_aggregates_leave`, which the tests of every job that reads participant clips share (the word check and the encoder caches): no segment or participant ID on the streams, apart from the one `FAILED:` line, and in `run.json` none outside its `error` and nothing per item.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`, and a tiny random Voxtral with a stand-in for its processor in `tests/voxtral_fakes.py`. The tests of the encoder caches and of the zero-shot scores reuse the word check's workspace. `tests/wordcheck_fakes.py` also holds the check of what may leave OMNI, `assert_only_aggregates_leave`, which the tests of every job that reads participant clips share (the word check, the encoder caches and the zero-shot scores): no segment or participant ID on the streams, apart from the one `FAILED:` line, and in `run.json` none outside its `error` and nothing per item.
 - Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.
@@ -324,7 +328,7 @@ python scripts/train.py --config "$config" --round $((task / 5 + 1)) --fold $((t
   5. The clamp example (y = 1, words −1.0, real audio −0.7): G = −0.70 with the clamp and +0.30 without it; push strength 1.000 and 0.500.
   6. The soft hinge is never more than s · ln 2 above the hard hinge, with the largest gap at G = m.
   7. As a bag grows confident (y = 1, words-only reference 0), the cross-entropy push |dCE/dz| = 1 − sigmoid(z̄0) fades gradually, while the gain push sigmoid((m − G)/s) stays close to 1 until G reaches the margin m and then falls off quickly.
-- The cache-equals-audio test (pilot protocol, section "Encoder caches and zero-shot scores") demands equal bytes, never a tolerance: z from a stored encoder output equals z from the audio, for clips of one and two chunks. It runs on a tiny random Voxtral on the CPU (`tests/test_voxtral.py`, `tests/test_cache.py`, through a `.npy` file) and on the real model on OMNI (the GPU tests of `tests/test_voxtral.py`, synthetic clips only). On real clips the cache check compares log-mel features and encoder outputs, never z.
+- The cache-equals-audio test (pilot protocol, section "Encoder caches and zero-shot scores") demands equal bytes, never a tolerance: z from a stored encoder output equals z from the audio, for clips of one and two chunks. It runs on a tiny random Voxtral on the CPU (`tests/test_voxtral.py`, `tests/test_cache.py`, through a `.npy` file) and on the real model on OMNI (the GPU tests of `tests/test_voxtral.py`, synthetic clips only). On real clips the cache check compares log-mel features and encoder outputs, never z, and the zero-shot job compares z on its check sample before it scores anything else.
 - The pilot also needs these tests: the gain is computed in fp32 from fp16 inputs; λG ramps up over the first 20% of steps; the running statistics use momentum 0.9 from first and second moments; and σ never falls below a quarter of its zero-shot value or 0.1.
 
 ## 11. Commits
