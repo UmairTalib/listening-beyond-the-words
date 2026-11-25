@@ -8,7 +8,7 @@ Author: Umair Talib · Supervisor: Ugonna Oleh
 
 [![CI](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml)
 
-> **Status (November 2026):** method designed, pilot study in preparation. No results yet.
+> **Status (November 2026):** pilot study in preparation. The speech, its clip versions, the encoder caches and the training code of B0, B1 and CPG are built; the GPU tests and the timing run of the training come next, then the zero-shot scores and the training runs. No results yet.
 
 ---
 
@@ -58,9 +58,9 @@ No results yet. The pilot's aggregate results and the go / no-go decision will a
 ## Repository layout
 
 ```text
-src/listening_beyond_words/   library code: data pipeline and clip versions (CPG loss, training and evaluation to come)
+src/listening_beyond_words/   library code: data pipeline, clip versions, encoder caches, the CPG loss and training (evaluation to come)
 tests/                        unit tests on synthetic data
-configs/                      settings and pins: data.yaml and models.yaml (the training configs come with training)
+configs/                      settings and pins: data.yaml, models.yaml, the shared training settings and one config per arm
 scripts/                      one Python script per pipeline step and shell scripts for OMNI; scripts/slurm/ holds the Slurm job files
 docs/                         pilot protocol, engineering conventions and glossary
 ```

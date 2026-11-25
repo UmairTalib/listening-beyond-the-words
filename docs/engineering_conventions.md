@@ -37,8 +37,9 @@ Inside the package:
 
 ```text
 settings.py      workspace paths, read from LBW_WORKSPACE
-runinfo.py       time, commit, per-item seeds, repeatable PyTorch kernels, file hashes,
-                 environment, run.json and error records without messages
+runinfo.py       time, commit and tags, per-item seeds, the seeds of a process, repeatable
+                 PyTorch kernels, file hashes, environment and GPU, run.json and error
+                 records without messages
 sessions.py      the 189 pilot sessions and the guard that refuses every other session
 labels.py        PHQ-8 labels of the pilot
 partitions.py    participants split into folds
@@ -65,6 +66,16 @@ cache.py         the stored encoder outputs: .npy files, their manifest, the che
                  sample and the pinned cache runs with their checks
 zeroshot.py      the zero-shot scores: their settings, the check's sample and the reader
                  of the pinned scores
+scoring.py       the scoring loop that every test-fold score comes from, the embargo before
+                 any score, and the label-free numbers of the scores
+config.py        the training configs: an arm file with the train.yaml it extends, checked
+                 into frozen dataclasses, and the SHA-256 of the resolved config
+loss.py          cross-entropy on z, the CPG gain term, its running statistics, the ramp of
+                 λG and the logged measures of a step
+bags.py          the bag sampler: the training participants' bags of each epoch and step
+training.py      the model that trains (LoRA and the adapter copy), AdamW and the loss
+                 scaler, one training step, the saved weights, the hand-over to the scoring
+                 model, and the measures of the checks and rules read on the training logs
 espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 
@@ -83,7 +94,8 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - Download and unpack stay shell scripts with their current names: `scripts/download_edaic.sh`, `scripts/unpack_edaic_pilot.sh` and its job file `scripts/slurm/unpack_edaic_pilot.sbatch`.
 - Create a folder only when its first file lands, and delete its `.gitkeep` then.
 - Shell scripts are glue for OMNI. New pipeline logic goes into Python.
-- The training steps are still to come. Where sections 4, 5, 8 and 9 describe them (logging to `run.log`, `config.py` and the arm configs, `runinfo.seed_everything`, the `--allow-dirty` option and the train job), they give the plan, and each part arrives with its code.
+- The training of B0, B1 and CPG is one GPU job, `train.py` (job file `scripts/slurm/train.sbatch`, job name `lbw-train`, submitted as `lbw-train-<arm>`), one array of 5 fold-runs per arm and round: `--config configs/pilot/<arm>.yaml --round <round> --fold <fold>`, the fold set by the array task. It refuses to run outside a clean offline GPU job, with an arm file outside `configs/pilot/` of the checkout, off the release tags (section 8), while any cache check flagged the language model, and with other numeric settings than the caches'; a run of CPG's round 1, fold 1 (the timing run excepted) also refuses while the run.json of another run of it cannot be read, since it could not tell where the once-only readings were made; apart from the timing run, it also refuses while `precision.deterministic` in `configs/pilot/train.yaml` says `pending` or the embargo holds, and B1 and CPG need the pinned zero-shot scores, so that a run that could not score stops before it trains. It trains from the pinned caches (pilot protocol, section "Training"), saves LoRA and the adapter copy, releases the training model and scores its own test fold on `x0` and `rev` with the zero-shot job's scoring code (`scoring.score_views`) from the saved file. It writes `runs/pilot/pilot-<arm>-r<round>-f<fold>-<YYYYmmdd-HHMMSS>/` with `adapter/`, `metrics.jsonl` (one line per step, no ID), `run.log`, `scores.parquet` and `run.json`. With `--timing` it is the timing run of check F5 (CPG, round 1, fold 1): the smoke bag at loss scale 1.0, then the first steps in warn-only and in strict mode, and the projection of a three-view run; it writes only `derived/train_timing/run-<job id>/run.json`, keeps no weights and scores nothing. `--allow-dirty` is for debugging only (section 8), and `--verbose` logs every step.
+- The analysis step, `evaluate`, is still to come. Where section 8 describes it, it gives the plan, and it arrives with its code.
 
 ## 2. Environment
 
@@ -221,12 +233,14 @@ $LBW_WORKSPACE/
   daicwoz/manifest/       checksums, server listing and status of the DAIC-WOZ download
   daicwoz/run-<time>/     DAIC-WOZ transcripts taken from the archives (read-only), their index
   derived/                labels, partitions, word times, segment manifests, the records of
-                          the word check and of the cache checks (cache_check/)
+                          the word check, of the cache checks (cache_check/) and of the
+                          training timing run (train_timing/run-<job id>/run.json)
   views/<view>/           clip versions (FLAC): x0, x1, x2, rev
   cache/<view>/           frozen-encoder outputs: run-<job id>/<session>/<segment>.npy in
                           fp16, listed in the run's manifest.parquet
-  runs/<study>/<run_id>/  checkpoints, metrics.jsonl, run.log, scores, run.json; the
-                          zero-shot scores in runs/pilot/pilot-zeroshot-<time>/
+  runs/<study>/<run_id>/  a trained run: adapter/ (LoRA and the adapter copy, in fp32),
+                          metrics.jsonl, run.log, scores.parquet, run.json; the zero-shot
+                          scores in runs/pilot/pilot-zeroshot-<time>/
   hf/                     pinned model snapshots (HF_HOME)
   logs/slurm/             Slurm logs
   env/                    environment, uv cache and espeak-ng, rebuilt by scripts/setup_omni_env.sh
@@ -280,7 +294,7 @@ The data steps built so far record the fields that apply to them: `config` holds
 
 - A step that needs a GPU, or that runs for more than a few minutes on a CPU, has one job file, `scripts/slurm/<step>.sbatch` (section 1); shorter steps run on a login node. Job names are `lbw-<step>` in hyphens, plus the arm where it helps (`lbw-train-cpg`).
 - Submit with `scripts/slurm/submit.sh [--option=value ...] <step> [arguments]`. It refuses a checkout with uncommitted changes, sends the log to `$LBW_WORKSPACE/logs/slurm/<job name>-<job id>.log`, records the commit for the job to check and submits every job with `--no-requeue`. Slurm on OMNI would otherwise requeue a job after a node failure under the same job ID, and the requeued job would meet its own half-written output. A job lost this way is rerun by hand.
-- Every job file has this shape, shown here for the planned train job:
+- Every job file has this shape, shown here for the train job, `scripts/slurm/train.sbatch`, with its comment cut short:
 
 ```bash
 #!/usr/bin/env bash
@@ -292,7 +306,8 @@ The data steps built so far record the fields that apply to them: `config` holds
 # Submit from an OMNI login node:
 #   scripts/slurm/submit.sh --job-name=lbw-train-cpg train configs/pilot/cpg.yaml 1
 #
-# Array task t trains fold t + 1 of the given round (5 fold-runs).
+# Array task t trains fold t + 1 of the given round (5 fold-runs). CPG's round 1, fold 1
+# runs alone first (--array=0); after the freeze, CPG's round 1 takes --array=1-4.
 #
 #SBATCH --job-name=lbw-train
 #SBATCH --partition=gpu
@@ -310,6 +325,7 @@ config="${1:?usage: train.sbatch <config> <round> [--timing]}"
 round="${2:?usage: train.sbatch <config> <round> [--timing]}"
 shift 2
 task="${SLURM_ARRAY_TASK_ID:?submit this job as an array}"
+nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv
 python scripts/train.py --config "$config" --round "$round" --fold $((task + 1)) "$@"
 ```
 
@@ -322,21 +338,22 @@ python scripts/train.py --config "$config" --round "$round" --fold $((task + 1))
 
 ## 10. Tests
 
-- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`, and a tiny random Voxtral with a stand-in for its processor in `tests/voxtral_fakes.py`. The tests of the encoder caches and of the zero-shot scores reuse the word check's workspace. `tests/wordcheck_fakes.py` also holds the check of what may leave OMNI, `assert_only_aggregates_leave`, which the tests of every job that reads participant clips share (the word check, the encoder caches and the zero-shot scores): no segment or participant ID on the streams, apart from the one `FAILED:` line, and in `run.json` none outside its `error` and nothing per item.
+- pytest, in `tests/`, with one file per module or step script: `tests/test_<module>.py`, `tests/test_<script>.py`. Shared fixtures live in `tests/conftest.py`, the stand-ins of the re-voiced clip's tests (a synthetic workspace and Kokoro's pipeline) in `tests/x1_fakes.py`, those of the word check's tests (a synthetic workspace with clips of all four views, fake ASR systems and a fake opensmile) in `tests/wordcheck_fakes.py`, and a tiny random Voxtral with a stand-in for its processor in `tests/voxtral_fakes.py`. The tests of the encoder caches and of the zero-shot scores reuse the word check's workspace. So do those of the training job (`tests/test_train.py`), with its labels and partitions kept and 8 to 12 segments per participant: the cache job and the zero-shot job build and pin its caches and zero-shot scores on the tiny Voxtral, and the job trains and scores on the CPU; they are marked `slow`. `tests/wordcheck_fakes.py` also holds the check of what may leave OMNI, `assert_only_aggregates_leave`, which the tests of every job that reads participant clips share (the word check, the encoder caches, the zero-shot scores and training): no segment or participant ID on the streams, apart from the one `FAILED:` line, and in `run.json` none outside its `error` and nothing per item. It sees the pilot IDs 300 to 399 only, so the job tests use pilot IDs, and a control shows that it fails on a planted ID. The training job's tests also look for each session ID of their workspace as a whole number, however it is worded, on the streams and in `run.log`, `metrics.jsonl` and `run.json`.
 - Synthetic data only. Fixtures build audio (tones and noise at 16 kHz), word lists and label tables in code. Fake participant IDs start at 9001, outside the real ID ranges. Code behind the session guard (`sessions.session_files`, `clips.read_session`) accepts only pilot IDs, so its tests use pilot IDs such as 300 and 301, with synthetic audio in a temporary folder.
 - Tests never touch the network or the real workspace. `conftest.py` sets `HF_HUB_OFFLINE=1` and points `LBW_WORKSPACE` at a temporary folder.
 - Markers: `slow` for tests over about 10 seconds, `gpu` for tests that need CUDA. `make test` skips both. `make test-all` adds the slow tests. `make test-gpu` runs the GPU tests inside a GPU job on OMNI. GPU tests skip themselves when no GPU is present.
 - Test names say what must hold, for example `test_revoiced_clip_gets_no_gradient_from_the_gain`.
-- Before the first CPG run, `tests/test_cpg_gain.py` ports these seven reference checks to PyTorch, in float64:
+- `tests/test_cpg_gain.py` ports these seven reference checks to PyTorch, in float64, with the reference's own numbers:
   1. A softmax over {Yes, No} equals sigmoid(logit(Yes) − logit(No)), and dCE/dz = sigmoid(z) − y.
   2. On 2,000 random cases, the gradient of the gain term on z̄0 matches −λG · sigmoid((m − G)/s) · (2y − 1) / σ0, and z̄1 gets exactly zero gradient.
   3. Without the stop-gradient, the gradient on z̄1 would push it towards the wrong label. The implementation must not have this path.
-  4. With z0 = k · z1 + c and exact statistics, G is zero on bags where the words are right.
+  4. With z0 = k · z1 + c and exact statistics, G is zero on bags where the words are right, and mirrored bags of the two classes get the same push where the words are wrong.
   5. The clamp example (y = 1, words −1.0, real audio −0.7): G = −0.70 with the clamp and +0.30 without it; push strength 1.000 and 0.500.
   6. The soft hinge is never more than s · ln 2 above the hard hinge, with the largest gap at G = m.
   7. As a bag grows confident (y = 1, words-only reference 0), the cross-entropy push |dCE/dz| = 1 − sigmoid(z̄0) fades gradually, while the gain push sigmoid((m − G)/s) stays close to 1 until G reaches the margin m and then falls off quickly.
 - The cache-equals-audio test (pilot protocol, section "Encoder caches and zero-shot scores") demands equal bytes, never a tolerance: z from a stored encoder output equals z from the audio, for clips of one and two chunks. It runs on a tiny random Voxtral on the CPU (`tests/test_voxtral.py`, `tests/test_cache.py`, through a `.npy` file) and on the real model on OMNI (the GPU tests of `tests/test_voxtral.py`, synthetic clips only). On real clips the cache check compares log-mel features and encoder outputs, never z, and the zero-shot job compares z on its check sample before it scores anything else.
-- The pilot also needs these tests: the gain is computed in fp32 from fp16 inputs; λG ramps up over the first 20% of steps; the running statistics use momentum 0.9 from first and second moments; and σ never falls below a quarter of its zero-shot value or 0.1.
+- It also checks the pushes on bags where the words are right, with exact and with running statistics, and the invariance cases. `tests/test_loss.py` checks that the gain is computed in at least fp32 from fp16 inputs, that λG ramps up over the first 20% of steps, that the running statistics use momentum 0.9 from first and second moments, once per step, and that σ never falls below a quarter of its zero-shot value or 0.1.
+- The training code has its own tests on the tiny Voxtral on the CPU: the configs (`tests/test_config.py`, `tests/test_train_config.py`), the bag sampler (`tests/test_bags.py`), training, saving and the scoring model (`tests/test_training.py`), and the scoring loop (`tests/test_scoring.py`). Their GPU tests, and the training job's hand-over (`tests/test_train.py`), run on the real model in `scripts/slurm/smoke_test.sbatch`, with synthetic encoder outputs only.
 
 ## 11. Commits
 

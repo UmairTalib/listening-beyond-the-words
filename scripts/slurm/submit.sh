@@ -2,7 +2,7 @@
 # submit.sh: submit a job file from scripts/slurm/ with the project's log location.
 #
 # Usage:   scripts/slurm/submit.sh [--sbatch-option=value ...] <job> [job arguments]
-# Example: scripts/slurm/submit.sh --array=0-9%10 train configs/pilot/cpg.yaml
+# Example: scripts/slurm/submit.sh --job-name=lbw-train-cpg train configs/pilot/cpg.yaml 1
 #
 # <job> names the file scripts/slurm/<job>.sbatch. Give sbatch options in the
 # --option=value form, before the job name. Run it on an OMNI login node.

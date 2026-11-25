@@ -555,11 +555,14 @@ def info_of(run: Path) -> dict:
 # What may leave OMNI ----------------------------------------------------------------------------
 
 # What would show a number per segment or participant: a segment ID, or a participant ID
-# as a key or paired with a value; and in run.json, a list as long as a fold of segments.
+# as a key, paired with a value or named as such ("participant 303", "session: 311"); and
+# in run.json, a list as long as a fold of segments or an ID as the value of an ID's key.
 SEGMENT_ID = re.compile(r"\b3\d\d_\d{3}\b")
 PARTICIPANT_PAIR = re.compile(r"[{\[,]\s*3\d\d\s*[:,]")
+NAMED_ID = re.compile(r"\b(?:participant|session|pid|speaker)s?\W{0,3}3\d\d\b", re.IGNORECASE)
 NUMBER_LIST = re.compile(r"[\[(](?:\s*-?[0-9][0-9.e+-]*\s*,){7,}")  # 8 numbers or more
 ITEM_KEY = re.compile(r"3\d\d(_\d{3})?")
+ID_KEY = re.compile(r"(?:^|_)(?:session|participant|pid|speaker)s?(?:$|_)", re.IGNORECASE)
 LONGEST_LIST = 7  # the public guard's voices; folds and intervals are shorter
 LONG_LISTS = {("settings", "whisper_resolved", "suppress_tokens")}  # long with faster-whisper
 
@@ -580,6 +583,23 @@ def per_item_paths(node: Any, path: tuple[str, ...] = ()) -> list[tuple[str, ...
     return found
 
 
+def id_values(node: Any, path: tuple[str, ...] = (), named: bool = False) -> list[tuple[str, ...]]:
+    """Where run.json holds a pilot ID (300 to 399) as a value under a key that names an ID."""
+    found: list[tuple[str, ...]] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found += id_values(value, (*path, str(key)), named or bool(ID_KEY.search(str(key))))
+    elif isinstance(node, list):
+        for value in node:
+            found += id_values(value, path, named)
+    elif named and not isinstance(node, bool) and isinstance(node, int | float):
+        if float(node).is_integer() and 300 <= node <= 399:
+            found.append(path)
+    elif named and isinstance(node, str) and re.fullmatch(r"3\d\d", node):
+        found.append(path)
+    return found
+
+
 def assert_only_aggregates_leave(run_json: Path, streams: str) -> None:
     """No ID on the streams (but on a failure line), and none in run.json (but in its error).
 
@@ -591,9 +611,13 @@ def assert_only_aggregates_leave(run_json: Path, streams: str) -> None:
     shown = "\n".join(line for line in streams.splitlines() if not line.startswith("FAILED: "))
     assert not SEGMENT_ID.search(shown)
     assert not PARTICIPANT_PAIR.search(shown)
+    assert not NAMED_ID.search(shown)
     assert not NUMBER_LIST.search(shown)
     info = json.loads(run_json.read_text(encoding="utf-8"))
     assert per_item_paths(info) == []
-    rest = json.dumps({key: value for key, value in info.items() if key != "error"})
+    kept = {key: value for key, value in info.items() if key != "error"}
+    assert id_values(kept) == []
+    rest = json.dumps(kept)
     assert not SEGMENT_ID.search(rest)
     assert not PARTICIPANT_PAIR.search(rest)
+    assert not NAMED_ID.search(rest)
