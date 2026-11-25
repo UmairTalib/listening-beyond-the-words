@@ -2324,7 +2324,7 @@ def test_the_job_file_asks_for_one_gpu_the_cpus_of_the_cache_jobs_and_one_fold_p
         "#SBATCH --ntasks=1",
         "#SBATCH --cpus-per-task=4",
         "#SBATCH --mem=48G",
-        "#SBATCH --time=06:00:00",
+        "#SBATCH --time=02:30:00",
         "#SBATCH --array=0-4",
     ):
         assert f"{line}\n" in text, line

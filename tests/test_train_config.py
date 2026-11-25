@@ -65,7 +65,7 @@ TRAIN = {
             "growth_interval_steps": 2000,
         },
         "checkpointing": "every_layer",
-        "deterministic": "pending",  # set by the commit that records the timing run
+        "deterministic": "strict",  # by its rule, from the timing run (job 12618228)
         "strict_max_extra_time_share": 0.1,
     },
     "sampler": {

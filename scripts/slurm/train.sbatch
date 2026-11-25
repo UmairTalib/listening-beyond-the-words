@@ -5,9 +5,10 @@
 # $LBW_WORKSPACE/runs/pilot/pilot-<arm>-r<round>-f<fold>-<YYYYmmdd-HHMMSS>/ and logs
 # aggregate numbers only. With --timing it is the timing run of check F5 (CPG, round 1,
 # fold 1, one task), which writes $LBW_WORKSPACE/derived/train_timing/run-<job id>/run.json
-# only. Estimates, not yet measured: 0.4-0.8 h for a B0 run and 0.9-2.1 h for a B1 or CPG
-# run with its loads and scoring; the 6 h limit leaves room, and the commit that records
-# the timing run sets it to about 1.5 times a 4-epoch three-view run. The 4 CPUs are those
+# only. The timing run (job 12618228, 2026-11-25) measured a three-view step at 13.8 s in
+# strict mode: about 1.04 h of training for 3 epochs and 1.4 h for 4, about 1.5 h with the
+# loads and the scoring; the limit, 2.5 h, is about 1.5 times that (B0 runs take about a
+# third). The 4 CPUs are those
 # of the cache jobs (encoder_cache.cpu_threads), so that the numeric settings match the
 # caches' record; 48G holds the scoring model built on the CPU. After the settings freeze,
 # submit from a checkout at the newest v0.1.x tag (git checkout v0.1.x on OMNI); the job
@@ -31,7 +32,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
-#SBATCH --time=06:00:00
+#SBATCH --time=02:30:00
 #SBATCH --array=0-4
 set -euo pipefail
 source scripts/slurm/common.sh

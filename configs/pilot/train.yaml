@@ -39,7 +39,7 @@ precision: # pilot protocol, section "Training", bullet "Number formats and repe
     backoff_factor: 0.5 # the scale halves, and the step is skipped, when a gradient overflows
     growth_interval_steps: 2000
   checkpointing: every_layer # gradient checkpointing on every layer (bullet "Calls")
-  deterministic: pending # strict or warn_only, set by the commit that records the timing run; until then training (the timing run excepted) and the zero-shot job refuse to run
+  deterministic: strict # set by its rule from the timing run (job 12618228, 2026-11-25): strict mode ran, and its median three-view step took 13.831 s against 13.709 s in warn-only mode (0.9% longer, at most 10%)
   strict_max_extra_time_share: 0.1 # strict mode if it runs and its median three-view step takes at most 10% longer than in warn-only mode
 sampler: # pilot protocol, section "Training", bullet "Bags and epochs"
   positive_bags: 2 # per step (pilot protocol, fixed settings "Segments and bags")

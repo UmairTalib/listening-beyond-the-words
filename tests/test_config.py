@@ -97,7 +97,7 @@ SHARED = TrainSettings(
             init_scale=65536.0, growth_factor=2.0, backoff_factor=0.5, growth_interval_steps=2000
         ),
         checkpointing="every_layer",
-        deterministic="pending",
+        deterministic="strict",  # by its rule, from the timing run (job 12618228)
         strict_max_extra_time_share=0.1,
     ),
     sampler=SamplerSettings(
