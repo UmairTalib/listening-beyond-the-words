@@ -20,7 +20,8 @@ The thesis gives the motivation, the related work and the complete study design.
 | B0 | Standard LoRA fine-tuning on the original audio (`x0`). |
 | B1 | Fine-tuning on `x0`, `x1` and `x2` with cross-entropy only (gain weight 0). |
 | Bag | Four segments of one participant. The gain term is computed per bag. |
-| Cache | The frozen encoder's output, saved once per segment and view. |
+| Cache | The frozen encoder's output, saved once per segment and view, in fp16, before the adapter. |
+| Chunk | 30 s of audio, the most that Voxtral's audio encoder reads at once. Each clip is padded with silence to a whole number of chunks, so a clip of 37.4 s fills two. The encoder turns each chunk into 1,500 vectors. |
 | CPG | Counterfactual paralinguistic gain: B1 plus the gain term. "Paralinguistic" means everything in speech beyond the words, such as pitch, timing, loudness and voice quality. |
 | CV | Cross-validation: train on some folds, test on the one left out, and repeat. |
 | eGeMAPS | A standard set of 88 voice measures, such as pitch, loudness and their variability, computed with opensmile. The checks of `x1` use them. |

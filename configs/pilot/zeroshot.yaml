@@ -1,0 +1,6 @@
+# The zero-shot arm of the pilot: Voxtral scores the clips untrained; see
+# docs/pilot_protocol.md, section "Encoder caches and zero-shot scores".
+
+arm: zeroshot # docs/pilot_protocol.md, design "Arms": scoring only; fixed on 2026-11-25
+views: [x0, x1, rev] # the two test views (rev passed check F4) and x1 for the running statistics
+check: {segments_per_view: 20, seed: 108} # plus every two-chunk segment; also scored from the audio; z equal byte for byte

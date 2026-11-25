@@ -241,7 +241,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 - Every random source is seeded from the config. In the pilot, round 1 uses partition and training seed 101, and round 2 uses 102.
 - `runinfo.seed_everything(seed)` seeds Python, NumPy and PyTorch and turns on deterministic algorithms with `warn_only=True`. NumPy code takes a `numpy.random.Generator`.
 - Randomness per item, such as the Kokoro rendering of a segment, uses a seed derived from the run seed and the item ID with `hashlib`. Never use Python's `hash()`: it changes between processes.
-- GPU runs are close to repeatable, not bit-identical. Record the facts and promise no more.
+- GPU runs are close to repeatable, not bit-identical. Record the facts and promise no more. The comparisons of the encoder caches and the zero-shot scores are the one exception (pilot protocol, section "Encoder caches and zero-shot scores"): the encoder's output for a clip, and the score z of a clip scored on its own, repeat byte for byte when the jobs use the same recorded numeric settings on the same GPU and CPU type. So these comparisons demand equal bytes, never a tolerance, and a difference is a fault to find and fix.
 - Every step writes `run.json` into its output folder, at the start and again at the end:
 
 | Field | Content |

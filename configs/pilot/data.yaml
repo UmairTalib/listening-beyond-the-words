@@ -143,6 +143,11 @@ wordcheck_run: # the word check on the sample, job 12600674 (2026-11-24): F4, th
   run: derived/wordcheck/run-12600674 # written by scripts/check_views.py
   sha256: 69c5e20ee78a3ff8558987c3300c55484c6b022fa683b9cdba265693702c2806 # of its transcripts.parquet
 
+encoder_cache: # docs/pilot_protocol.md, section "Encoder caches and zero-shot scores"; fixed on 2026-11-25, before any cache is built
+  # the encoder's output before the adapter (last_hidden_state), fp16, every vector; a clip over 30 s in two chunks; one clip per call
+  cpu_threads: 4 # torch threads in every step-7 job (and --cpus-per-task), so that log-mel features are built the same way everywhere
+  verify: {segments_per_view: 25, seed: 108, lm_watch_clips: 25} # plus every two-chunk segment; encoder outputs compared byte for byte, never z; then the language model without its output layer on the longest clips
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet
