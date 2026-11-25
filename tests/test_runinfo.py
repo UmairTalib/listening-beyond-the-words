@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import random
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,9 @@ import pytest
 from listening_beyond_words.runinfo import (
     check_sha256,
     environment,
+    git_state,
     item_seed,
+    seed_everything,
     sha256_file,
     utc_stamp,
     write_json,
@@ -306,3 +309,131 @@ def test_deterministic_torch_asks_for_repeatable_kernels_without_autotuning() ->
         torch.use_deterministic_algorithms(saved[0], warn_only=saved[1])
         torch.backends.cudnn.deterministic = saved[2]
         torch.backends.cudnn.benchmark = saved[3]
+
+
+# Seeds --------------------------------------------------------------------------------------
+
+
+def draws() -> tuple[float, float, float]:
+    """One draw from Python's, NumPy's global and PyTorch's random number generators."""
+    import torch
+
+    return random.random(), float(np.random.random()), float(torch.rand(1))  # noqa: NPY002
+
+
+def seeded_draws(*seeds: int) -> list[tuple[float, float, float]]:
+    """The draws after each seed; every generator is put back as it was afterwards."""
+    import torch
+
+    python, numpy = random.getstate(), np.random.get_state()  # noqa: NPY002
+    with torch.random.fork_rng(devices=[]):
+        try:
+            found = []
+            for seed in seeds:
+                seed_everything(seed)
+                found.append(draws())
+            return found
+        finally:
+            random.setstate(python)
+            np.random.set_state(numpy)  # noqa: NPY002
+
+
+def test_seed_everything_repeats_the_draws_of_python_numpy_and_pytorch() -> None:
+    seed = item_seed(101, "torch", 1)
+    first, again, other = seeded_draws(seed, seed, item_seed(101, "torch", 2))
+    assert first == again
+    assert all(one != two for one, two in zip(first, other, strict=True))
+
+
+def test_seed_everything_gives_numpy_all_64_bits_of_the_seed() -> None:
+    low, high = seeded_draws(7, 2**32 + 7)
+    assert low[1] != high[1]  # NumPy's global state takes the seed as two 32-bit words
+    assert seeded_draws(2**64 - 1)[0] != seeded_draws(0)[0]
+
+
+@pytest.mark.parametrize(
+    ("seed", "error"),
+    [(True, TypeError), (1.5, TypeError), ("7", TypeError), (-1, ValueError), (2**64, ValueError)],
+)
+def test_seed_everything_refuses_what_is_no_seed(seed: object, error: type[Exception]) -> None:
+    with pytest.raises(error):
+        seed_everything(seed)  # type: ignore[arg-type]
+
+
+# The checkout --------------------------------------------------------------------------------
+
+
+def git(folder: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=folder, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway git repository with one commit, as the working folder, with no outside config."""
+    settings = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    }
+    for name, value in settings.items():
+        monkeypatch.setenv(name, value)
+    folder = tmp_path / "clone"
+    folder.mkdir()
+    git(folder, "init", "--quiet")
+    (folder / "file.txt").write_text("one", encoding="utf-8")
+    git(folder, "add", "file.txt")
+    git(folder, "commit", "--quiet", "-m", "first")
+    monkeypatch.chdir(folder)
+    return folder
+
+
+def commit(folder: Path, text: str) -> str:
+    (folder / "file.txt").write_text(text, encoding="utf-8")
+    git(folder, "commit", "--quiet", "-am", text)
+    return git(folder, "rev-parse", "HEAD")
+
+
+def test_git_state_describes_a_checkout_without_tags_by_its_short_commit(clone: Path) -> None:
+    state = git_state()
+    assert state == {
+        "commit": git(clone, "rev-parse", "HEAD"),
+        "dirty": False,
+        "describe": git(clone, "rev-parse", "--short", "HEAD"),
+        "tags": [],
+        "release_tags": [],
+    }
+
+
+def test_git_state_names_the_tags_at_the_commit_and_every_pilot_release(clone: Path) -> None:
+    git(clone, "tag", "-a", "v0.1.0", "-m", "Pilot settings frozen")
+    git(clone, "tag", "smoke")
+    git(clone, "tag", "v0.2.0")
+    state = git_state()
+    assert state["tags"] == ["smoke", "v0.1.0", "v0.2.0"]
+    assert state["release_tags"] == ["v0.1.0"]  # the pilot's releases only
+
+
+def test_git_state_describes_commits_after_a_tag_and_a_dirty_checkout(clone: Path) -> None:
+    first = git(clone, "rev-parse", "HEAD")
+    commit(clone, "two")
+    git(clone, "tag", "-a", "v0.1.0", "-m", "Pilot settings frozen")
+    assert git_state()["describe"] == "v0.1.0"
+    later = commit(clone, "three")
+    state = git_state()
+    assert state["describe"] == f"v0.1.0-1-g{git(clone, 'rev-parse', '--short', 'HEAD')}"
+    assert (state["commit"], state["tags"], state["release_tags"]) == (later, [], ["v0.1.0"])
+    (clone / "file.txt").write_text("changed", encoding="utf-8")
+    state = git_state()
+    assert state["dirty"] is True
+    assert str(state["describe"]).endswith("-dirty")
+    git(clone, "checkout", "--quiet", "--", "file.txt")
+    git(clone, "checkout", "--quiet", first)  # a commit older than the tag ...
+    state = git_state()
+    assert state["release_tags"] == ["v0.1.0"]  # ... still sees it
+    assert (state["tags"], state["dirty"]) == ([], False)
+    assert state["describe"] == git(clone, "rev-parse", "--short", "HEAD")

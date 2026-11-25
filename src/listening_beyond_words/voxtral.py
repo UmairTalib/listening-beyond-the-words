@@ -15,9 +15,12 @@ zero-shot scores"), so its output before the adapter is computed once per clip
 pass-through (``use_cached_encoder``) and sends the stored output through the library's
 own adapter, token placement and language model (``cached_score``). z from the cache
 then equals z from the audio bit for bit, when both run with the same numeric settings
-(``set_numerics``) on the same GPU and CPU type. ``watch_layers`` counts fp16 overflow
-in the parts it watches: every step of the encoder (``encoder_layers``), and every step
-from the adapter to the logits (``language_model_layers``).
+(``set_numerics``) on the same GPU and CPU type. Training sends a bag's stored outputs
+through the same path, several clips of one chunk count per call, and keeps the graph
+(``cached_z``). ``watch_layers`` counts fp16 overflow in the parts it watches: every
+step of the encoder (``encoder_layers``), and every step from the adapter to the logits
+(``language_model_layers``); training pauses it for the backward pass
+(``LayerWatch.pause``).
 
 Every function that takes the model also takes it inside a PEFT wrapper (step 8's
 trained arms): it then works on the wrapped model, whose modules hold the LoRA layers and
@@ -27,11 +30,12 @@ torch and transformers are imported inside the functions that use them.
 """
 
 import base64
+import contextlib
 import functools
 import io
 import operator
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -544,6 +548,99 @@ def cached_score(
     return _score(model, _model_inputs(prompt, encoder_output), answer_ids)
 
 
+def _check_cached_batch(
+    model: Any, prompt: Mapping[str, Any], outputs: Sequence["torch.Tensor"]
+) -> int:
+    """Stop unless stored outputs of one chunk count can go through the model in one call.
+
+    Unlike ``_check_cached_input`` it leaves the adapter's format alone: training keeps the
+    adapter in fp32 and runs under fp16 autocast. Returns the clips' chunk count.
+    """
+    import torch
+
+    if not _cached(model):
+        raise StepError("the model's own encoder is in place; call use_cached_encoder first")
+    if not outputs:
+        raise StepError("a call needs at least one stored encoder output")
+    width = _base(model).config.audio_config.hidden_size
+    counts = set()
+    for output in outputs:
+        shape = tuple(output.shape)
+        if len(shape) != 3 or shape[0] < 1 or shape[1:] != (FRAMES_PER_CHUNK, width):
+            raise StepError(
+                f"a stored encoder output has shape (C, {FRAMES_PER_CHUNK}, {width}), not {shape}"
+            )
+        if output.dtype != torch.float16:
+            raise StepError(f"a stored encoder output is fp16, not {output.dtype}")
+        counts.add(shape[0])
+    if len(counts) > 1:
+        raise StepError(f"the clips of one call have one chunk count, not {sorted(counts)}")
+    (count,) = counts
+    ids = prompt["input_ids"]
+    if ids.ndim != 2 or ids.shape[0] != 1:
+        raise StepError(f"the prompt is one row of token IDs, not of shape {tuple(ids.shape)}")
+    tokens = int((ids == _base(model).config.audio_token_id).sum())
+    if tokens != TOKENS_PER_CHUNK * count:
+        raise StepError(
+            f"the prompt holds {tokens} audio tokens, but each stored output fills"
+            f" {TOKENS_PER_CHUNK * count} ({count} x {TOKENS_PER_CHUNK})"
+        )
+    return count
+
+
+def cached_z(
+    model: Any,
+    prompt: Mapping[str, Any],
+    outputs: Sequence["torch.Tensor"],
+    answer_ids: tuple[int, int],
+) -> "torch.Tensor":
+    """Return z of clips of one chunk count from their stored encoder outputs, with the graph.
+
+    The training forward pass (pilot protocol, section "Training", bullet "Calls"): the B
+    clips go through the library's own adapter, token placement and language model in one
+    call, as rows of the same prompt, so no row is padded; the stored outputs are joined in
+    their order, which ``masked_scatter`` places row by row. Only the last position's logits
+    are computed (``logits_to_keep=1``), without the key/value cache (``use_cache=False``),
+    and they are cast to float32 before the difference, as in ``cached_score``. Unlike
+    ``cached_score`` it keeps the graph and leaves the format of the trained weights to the
+    caller, which runs it under fp16 autocast with LoRA and the adapter in fp32.
+
+    Args:
+        model: The training model, a PEFT model wrapping the loaded one, with the
+            pass-through in place (``use_cached_encoder``).
+        prompt: The token IDs and mask of a clip of C chunks (``prompt_inputs``), shape
+            (1, L).
+        outputs: The clips' stored encoder outputs, B of them, each of shape (C, 1500, W)
+            in fp16, all of one chunk count C.
+        answer_ids: The token IDs of "Yes" and "No" (see ``answer_token_ids``).
+
+    Returns:
+        z of each clip, shape (B,), float32, in the order of ``outputs``, with the graph of
+        the model's trained weights.
+
+    Raises:
+        StepError: If the model's own encoder is in place, no output is given, an output is
+            not fp16 or not of shape (C, 1500, W), the outputs differ in chunk count, or the
+            prompt is not one row holding 375 audio tokens per chunk of theirs.
+    """
+    import torch
+
+    _check_cached_batch(model, prompt, outputs)
+    yes_id, no_id = answer_ids
+    model = _base(model)
+    device = model.device
+    rows = len(outputs)
+    output = model(
+        input_ids=prompt["input_ids"].to(device).repeat(rows, 1),
+        attention_mask=prompt["attention_mask"].to(device).repeat(rows, 1),
+        input_features=torch.cat([stored.to(device) for stored in outputs]),
+        logits_to_keep=1,
+        use_cache=False,
+    )
+    logits = output.logits[:, -1].float()
+    return logits[:, yes_id] - logits[:, no_id]
+
+
 def lm_pass(model: Any, prompt: Mapping[str, Any], encoder_output: "torch.Tensor") -> None:
     """Send a stored encoder output through the model without its output layer.
 
@@ -704,6 +801,8 @@ class LayerWatch:
     finite |value|, the finite values at the encoder's clamp or above (|x| >= 64,512)
     and the non-finite values. Any such value flags the layer. Counts only: no value of a
     clip is kept. Build it with ``watch_layers``; leaving a ``with`` block removes it.
+    Inside ``pause`` its hooks count nothing: training's backward pass recomputes each
+    checkpointed layer, which would otherwise count its parts twice.
 
     Args:
         layers: The modules to watch, by name.
@@ -712,11 +811,40 @@ class LayerWatch:
     def __init__(self, layers: Mapping[str, Any]) -> None:
         self._tallies: dict[tuple[str, str], _Tally] = {}
         self._handles: list[Any] = []
+        self._paused = False
         for name, layer in layers.items():
             for part, module in _parts(layer).items():
                 tally = _Tally()
                 self._tallies[(name, part)] = tally
-                self._handles.append(module.register_forward_hook(tally.hook))
+                self._handles.append(
+                    module.register_forward_hook(functools.partial(self._count, tally))
+                )
+
+    def _count(self, tally: _Tally, module: Any, args: Any, output: Any) -> None:
+        """Count one call's output in its tally, unless the watch is paused."""
+        if not self._paused:
+            tally.hook(module, args, output)
+
+    @property
+    def paused(self) -> bool:
+        """Whether the hooks count nothing at the moment."""
+        return self._paused
+
+    @contextlib.contextmanager
+    def pause(self) -> Iterator[None]:
+        """Count nothing inside the block, then count again as before.
+
+        Training runs its backward pass here (pilot protocol, section "Training", bullet
+        "Overflow in training"): gradient checkpointing computes every layer again there,
+        and that recomputation would count the parts of each layer twice, so the counts
+        cover the forward calls alone.
+        """
+        before = self._paused
+        self._paused = True
+        try:
+            yield
+        finally:
+            self._paused = before
 
     def record(self) -> dict[str, dict[str, dict[str, int | float | None]]]:
         """Return, by layer name and part: calls, ``max_abs``, ``at_clamp`` and ``non_finite``."""

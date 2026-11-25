@@ -698,6 +698,125 @@ def test_the_watch_also_reads_outside_inference_mode(models: dict[str, Any]) -> 
     assert watch.record()["mlp"]["output"]["calls"] == 3
 
 
+def test_a_paused_watch_counts_nothing_and_counts_again_after_its_pause() -> None:
+    import torch
+
+    layer = torch.nn.Identity()
+    with voxtral.watch_layers({"layer": layer}) as watch:
+        layer(torch.tensor([3.0], dtype=torch.float16))
+        assert not watch.paused
+        with watch.pause():
+            assert watch.paused
+            layer(torch.tensor([64_512.0, math.nan], dtype=torch.float16))  # never counted
+            with watch.pause():  # a pause inside a pause ends with the outer one
+                layer(torch.tensor([math.inf], dtype=torch.float16))
+            assert watch.paused
+        assert not watch.paused
+        layer(torch.tensor([-5.0], dtype=torch.float16))
+    assert watch.record() == {
+        "layer": {"output": {"calls": 2, "max_abs": 5.0, "at_clamp": 0, "non_finite": 0}}
+    }
+    assert watch.flagged() == []
+
+
+def test_a_pause_ends_with_its_block_when_the_block_raises() -> None:
+    import torch
+
+    layer = torch.nn.Identity()
+    with voxtral.watch_layers({"layer": layer}) as watch:
+        with pytest.raises(RuntimeError, match="planted"), watch.pause():
+            raise RuntimeError("planted")
+        layer(torch.tensor([64_512.0], dtype=torch.float16))
+    assert not watch.paused
+    assert watch.flagged() == ["layer/output"]
+
+
+# z with the graph, as training reads it ------------------------------------------------------
+
+
+def lora_model(seed: int = 0) -> Any:
+    """The tiny fp16 Voxtral with LoRA on its language model and the adapter's copy, LoRA B set."""
+    import torch
+    from peft import LoraConfig, get_peft_model
+
+    config = LoraConfig(
+        r=4,
+        lora_alpha=8,
+        target_modules=r"model\.language_model\.layers\.\d+\.self_attn\.(q|v)_proj",
+        modules_to_save=["multi_modal_projector"],
+    )
+    model = get_peft_model(tiny_model(half=True), config).eval()
+    generator = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for name, parameter in model.named_parameters():
+            if "lora_" in name:  # trained, as if, and in fp16 as scoring holds them
+                parameter.data = parameter.data.half()
+            if "lora_B" in name:
+                parameter.normal_(0.0, 0.5, generator=generator)
+    return model
+
+
+def test_cached_z_gives_each_clip_the_z_of_cached_score_one_call_for_several_clips(
+    processor: FakeProcessor, inputs: dict[float, Any]
+) -> None:
+    import torch
+
+    model = lora_model()
+    clips = [voxtral.clip_inputs(processor, tone(14.0, seed)) for seed in (1, 2, 3, 4)]
+    one = [voxtral.encoder_output(model, clip) for clip in clips]
+    two = voxtral.encoder_output(model, inputs[37.4])
+    prompts = {count: voxtral.prompt_inputs(processor, count) for count in (1, 2)}
+    with cached_encoder(model):
+        expected = [voxtral.cached_score(model, prompts[1], output, ANSWER_IDS) for output in one]
+        long = voxtral.cached_score(model, prompts[2], two, ANSWER_IDS)
+        together = voxtral.cached_z(model, prompts[1], one, ANSWER_IDS)
+        alone = [voxtral.cached_z(model, prompts[1], [output], ANSWER_IDS) for output in one]
+        long_z = voxtral.cached_z(model, prompts[2], [two], ANSWER_IDS)
+    assert together.dtype == torch.float32
+    assert tuple(together.shape) == (4,)
+    assert together.requires_grad  # the graph is kept: LoRA and the adapter train
+    assert [float(z.detach()).hex() for z in alone] == [z.hex() for z in expected]
+    assert float(long_z.detach()).hex() == long.hex()
+    # On the CPU four clips in one call give the bits of four calls (on the GPU other kernels
+    # may run; the GPU tests print the difference).
+    assert [z.hex() for z in together.detach().tolist()] == [z.hex() for z in expected]
+    assert len(set(expected)) == 4  # each clip its own z
+
+
+def test_cached_z_refuses_outputs_that_do_not_fit_one_call(
+    models: dict[str, Any], processor: FakeProcessor, inputs: dict[float, Any]
+) -> None:
+    model = models["fp16"]
+    one = voxtral.encoder_output(model, inputs[14.0])
+    two = voxtral.encoder_output(model, inputs[37.4])
+    prompt_one = voxtral.prompt_inputs(processor, 1)
+    prompt_two = voxtral.prompt_inputs(processor, 2)
+    with pytest.raises(StepError, match="call use_cached_encoder first"):
+        voxtral.cached_z(model, prompt_one, [one], ANSWER_IDS)
+    with cached_encoder(model):
+        with pytest.raises(StepError, match="at least one stored encoder output"):
+            voxtral.cached_z(model, prompt_one, [], ANSWER_IDS)
+        with pytest.raises(StepError, match=r"is fp16, not torch\.float32"):
+            voxtral.cached_z(model, prompt_one, [one, one.float()], ANSWER_IDS)
+        with pytest.raises(StepError, match="has shape"):
+            voxtral.cached_z(model, prompt_one, [one[:, :, : WIDTH // 2]], ANSWER_IDS)
+        with pytest.raises(StepError, match="has shape"):
+            voxtral.cached_z(model, prompt_one, [one[:, :-1]], ANSWER_IDS)
+        with pytest.raises(StepError, match="has shape"):
+            voxtral.cached_z(model, prompt_one, [one[0]], ANSWER_IDS)
+        with pytest.raises(StepError, match=re.escape("one chunk count, not [1, 2]")):
+            voxtral.cached_z(model, prompt_one, [one, two], ANSWER_IDS)
+        with pytest.raises(StepError, match=re.escape("one chunk count, not [1, 2]")):
+            voxtral.cached_z(model, prompt_two, [two, one], ANSWER_IDS)
+        with pytest.raises(StepError, match=re.escape("holds 375 audio tokens, but each stored")):
+            voxtral.cached_z(model, prompt_one, [two], ANSWER_IDS)
+        with pytest.raises(StepError, match=re.escape("holds 750 audio tokens, but each stored")):
+            voxtral.cached_z(model, prompt_two, [one, one], ANSWER_IDS)
+        rows = {name: value.repeat(2, 1) for name, value in prompt_one.items()}
+        with pytest.raises(StepError, match="one row of token IDs"):
+            voxtral.cached_z(model, rows, [one], ANSWER_IDS)
+
+
 # Loading -----------------------------------------------------------------------------------
 
 

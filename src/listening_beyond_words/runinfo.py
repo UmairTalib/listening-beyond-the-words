@@ -1,13 +1,15 @@
 """What every step records about itself: time, commit, seeds, file hashes, run.json and errors.
 
-It also asks PyTorch for repeatable kernels (``deterministic_torch``); torch is imported
-inside that function only.
+It also asks PyTorch for repeatable kernels (``deterministic_torch``) and seeds every
+random number generator of a process (``seed_everything``); torch is imported inside
+those functions only.
 """
 
 import hashlib
 import json
 import numbers
 import platform
+import random
 import signal
 import subprocess
 import sys
@@ -36,13 +38,38 @@ def utc_stamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
+RELEASE_TAGS: Final = "v0.1.*"  # the pilot's releases: v0.1.0 freezes its settings
+
+
 def git_state() -> dict[str, object]:
-    """Return the checked-out commit and whether the checkout has uncommitted changes."""
+    """Return the checked-out commit, whether the checkout has uncommitted changes, and its tags.
+
+    Engineering conventions, section 8: a run records the commit, the dirty flag and the
+    output of ``git describe --tags --always --dirty`` with the tags at the commit. The
+    pilot's release tags are listed too, so that the training job can tell whether the
+    settings are frozen yet, and tests patch this one function.
+
+    Returns:
+        ``commit``; ``dirty``; ``describe``, the nearest tag with the commits since and the
+        commit, or the short commit alone where no tag exists, with ``-dirty`` for
+        uncommitted changes; ``tags``, the tags at the commit (``git tag --points-at
+        HEAD``), sorted; and ``release_tags``, every ``v0.1.*`` tag of the clone (``git tag
+        --list``), sorted, which a checkout of an older commit still sees.
+    """
 
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
 
-    return {"commit": git("rev-parse", "HEAD").strip(), "dirty": bool(git("status", "--porcelain"))}
+    def names(text: str) -> list[str]:
+        return sorted(line.strip() for line in text.splitlines() if line.strip())
+
+    return {
+        "commit": git("rev-parse", "HEAD").strip(),
+        "dirty": bool(git("status", "--porcelain")),
+        "describe": git("describe", "--tags", "--always", "--dirty").strip(),
+        "tags": names(git("tag", "--points-at", "HEAD")),
+        "release_tags": names(git("tag", "--list", RELEASE_TAGS)),
+    }
 
 
 def item_seed(seed: int, *keys: int | str) -> int:
@@ -88,6 +115,36 @@ def deterministic_torch() -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True, warn_only=True)
+
+
+def seed_everything(seed: int) -> None:
+    """Seed Python's, NumPy's global and PyTorch's random number generators from one seed.
+
+    Engineering conventions, section 8. The package's own NumPy code still takes a seeded
+    ``numpy.random.Generator`` and never draws from the global state; seeding it fixes only
+    what another package might draw there. NumPy's global state takes 32-bit words, so the
+    seed goes in as its low and its high 32 bits. ``torch.manual_seed`` seeds the CPU and
+    every GPU.
+
+    Args:
+        seed: A whole number from 0 to 2**64 - 1, such as an ``item_seed``.
+
+    Raises:
+        TypeError: If the seed is not a whole number; True and False are refused too.
+        ValueError: If the seed is negative or 2**64 or more.
+    """
+    import torch
+
+    if isinstance(seed, bool) or not isinstance(seed, numbers.Integral):
+        raise TypeError(f"a seed is a whole number, not {seed!r}")
+    value = int(seed)
+    if not 0 <= value < 2**64:
+        raise ValueError(f"a seed lies from 0 to 2**64 - 1, not {value}")
+    random.seed(value)
+    # The global state, which the conventions ban for the package's own draws (ruff NPY002),
+    # is seeded on purpose here.
+    np.random.seed([value & 0xFFFF_FFFF, value >> 32])  # noqa: NPY002
+    torch.manual_seed(value)
 
 
 def sha256_file(path: Path) -> str:
