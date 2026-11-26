@@ -8,7 +8,7 @@ Author: Umair Talib · Supervisor: Ugonna Oleh
 
 [![CI](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml)
 
-> **Status (November 2026):** pilot study in preparation. The speech, its clip versions, the encoder caches and the training code of B0, B1 and CPG are built; the GPU tests and the timing run of the training come next, then the zero-shot scores and the training runs. No results yet.
+> **Status (November 2026):** pilot study under way. The speech, its clip versions, the encoder caches, the training code and the zero-shot scores are done. B0's round 1 and the first CPG run have trained; the CPG run's training log changed no setting, and the settings are now frozen (version 0.1.0). The other 24 training runs come next, then the analysis. No results yet.
 
 ---
 
