@@ -85,7 +85,11 @@ def test_data_config_pins_the_cache_run_of_every_clip_version_with_its_check() -
     assert len({pin["sha256"] for pin in pins.values()}) == len(pins)
 
 
-def test_no_zero_shot_score_is_pinned_before_its_job_runs() -> None:
-    # Its record commit pins it (zeroshot_scores) and replaces this test with one that
-    # checks its shape.
-    assert "zeroshot_scores" not in load(DATA)
+def test_data_config_pins_the_zero_shot_scores_by_the_hash_of_their_file() -> None:
+    # scripts/score_zeroshot.py, job 12623143 (2026-11-26), once the training rules and the
+    # timing run were recorded.
+    pin = load(DATA)["zeroshot_scores"]
+    assert set(pin) == {"run", "sha256"}
+    assert pin["run"] == "runs/pilot/pilot-zeroshot-20261125-231734"
+    assert len(pin["sha256"]) == 64
+    assert set(pin["sha256"]) <= set("0123456789abcdef")

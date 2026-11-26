@@ -166,6 +166,10 @@ cache_runs: # the encoder caches of all 5,883 segments, built by scripts/build_c
     sha256: 23203d8c26e1836478622f8cdf43c7d1fb934881f19867d67167c18389764a10 # of its manifest.parquet
     verified_by: derived/cache_check/run-12611479
 
+zeroshot_scores: # the zero-shot arm's scores of every segment of x0, x1 and rev, by scripts/score_zeroshot.py, job 12623143 (2026-11-26), after the training rules and the timing run were recorded (1d3f8a3): the check sample equal to the audio bit for bit, every z finite, no part flagged
+  run: runs/pilot/pilot-zeroshot-20261125-231734
+  sha256: 9d37b4c58ed1b204057296cbb3f8125efca2eee74f1c5bd294b5d34f9d315e68 # of its scores.parquet
+
 ellie_detector: # docs/pilot_protocol.md, section "Interviewer detector"; pre-registered 2026-11-13
   run: null # written by scripts/detect_ellie.py
   sha256: null # of its zones.parquet
