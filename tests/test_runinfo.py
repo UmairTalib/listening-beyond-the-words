@@ -463,6 +463,92 @@ def test_release_tags_are_ordered_by_their_numbers_and_others_are_refused() -> N
         newest_release([])
 
 
+AT_V0_1_1 = {
+    "commit": "e" * 40,
+    "dirty": False,
+    "describe": "v0.1.1",
+    "tags": ["v0.1.1"],
+    "release_tags": ["v0.1.0", "v0.1.1"],
+}
+WHAT = ("the gain-term summary", 'pilot diagnostics, section "Order"')
+
+
+@pytest.mark.parametrize(
+    ("git", "installed", "message"),
+    [
+        (
+            {**AT_V0_1_1, "tags": [], "release_tags": []},
+            "0.1.1",
+            "no v0.1.* tag exists in the clone: the gain-term summary runs only from the release"
+            ' that holds its code (pilot diagnostics, section "Order")',
+        ),
+        (
+            {**AT_V0_1_1, "tags": ["v0.1.0"], "describe": "v0.1.0"},
+            "0.1.0",
+            "the checkout (v0.1.0) is not at the newest release tag v0.1.1: the gain-term"
+            " summary runs only from it (git checkout v0.1.1 on OMNI, then bash"
+            " scripts/setup_omni_env.sh)",
+        ),
+        (
+            {**AT_V0_1_1, "tags": ["v0.1.2"], "release_tags": ["v0.1.10", "v0.1.2"]},
+            "0.1.2",
+            "the checkout (v0.1.1) is not at the newest release tag v0.1.10: the gain-term"
+            " summary runs only from it (git checkout v0.1.10 on OMNI, then bash"
+            " scripts/setup_omni_env.sh)",
+        ),
+        (
+            {**AT_V0_1_1, "release_tags": ["v0.1.0", "v0.1.1", "v0.1.x"]},
+            "0.1.1",
+            "the tag v0.1.x matches v0.1.* but is no release v0.1.<number>: the release guard"
+            " cannot order it",
+        ),
+        (
+            AT_V0_1_1,
+            "0.1.1.dev0",
+            "the environment holds version 0.1.1.dev0 of the code, not 0.1.1 of the tag v0.1.1:"
+            " build it again at the tag (bash scripts/setup_omni_env.sh)",
+        ),
+        (
+            AT_V0_1_1,
+            "none (the package is not installed)",
+            "the environment holds version none (the package is not installed) of the code, not"
+            " 0.1.1 of the tag v0.1.1",
+        ),
+    ],
+)
+def test_the_release_guard_refuses_any_checkout_but_the_newest_release_and_its_code(
+    git: dict[str, object], installed: str, message: str
+) -> None:
+    from listening_beyond_words.runinfo import StepError, release_guard
+
+    with pytest.raises(StepError) as refused:
+        release_guard(git, installed, *WHAT)
+    assert str(refused.value).startswith(message)
+
+
+def test_the_release_guard_names_the_newest_release_by_its_number() -> None:
+    from listening_beyond_words.runinfo import release_guard
+
+    assert release_guard(AT_V0_1_1, "0.1.1", *WHAT) == "v0.1.1"
+    tenth = {**AT_V0_1_1, "tags": ["v0.1.10"], "release_tags": ["v0.1.10", "v0.1.2", "v0.1.0"]}
+    assert release_guard(tenth, "0.1.10", *WHAT) == "v0.1.10"
+    # Another tag at the same commit does not matter; the release tag does.
+    both = {**AT_V0_1_1, "tags": ["other", "v0.1.1"]}
+    assert release_guard(both, "0.1.1", *WHAT) == "v0.1.1"
+
+
+def test_the_installed_version_is_read_from_the_metadata_or_said_to_be_missing() -> None:
+    from importlib.metadata import version
+
+    from listening_beyond_words.runinfo import PACKAGE, installed_version
+
+    assert PACKAGE == "listening-beyond-words"
+    assert installed_version() == version(PACKAGE)
+    assert installed_version("no-such-package-of-this-project") == (
+        "none (the package is not installed)"
+    )
+
+
 def test_the_first_runs_are_b0s_round_1_and_cpgs_round_1_fold_1() -> None:
     from listening_beyond_words.runinfo import FIRST_RUNS, is_first_run
 

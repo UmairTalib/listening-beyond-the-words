@@ -3,6 +3,8 @@
 It also asks PyTorch for repeatable kernels (``deterministic_torch``), seeds every
 random number generator of a process (``seed_everything``) and says what GPU a job runs
 on (``gpu_facts``, ``peak_memory_gb``); torch is imported inside those functions only.
+The steps that compute the pilot's published numbers refuse any checkout but the newest
+release, and installed code of another version (``release_guard``).
 """
 
 import hashlib
@@ -15,7 +17,7 @@ import signal
 import subprocess
 import sys
 import traceback
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -142,6 +144,70 @@ def is_first_run(arm: str, round_number: int, fold: int) -> bool:
         (arm, round_number) == (first_arm, first_round) and first_fold in (None, fold)
         for first_arm, first_round, first_fold in FIRST_RUNS
     )
+
+
+PACKAGE: Final = "listening-beyond-words"  # the installed code, whose version must be the tag's
+
+
+def installed_version(package: str = PACKAGE) -> str:
+    """Return the version of the installed code, as the environment's metadata holds it.
+
+    Args:
+        package: The installed package; by default this project's code.
+
+    Returns:
+        Its version, or a text that says that it is not installed.
+    """
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return "none (the package is not installed)"
+
+
+def release_guard(git: Mapping[str, Any], installed: str, what: str, source: str) -> str:
+    """Refuse a checkout off the newest v0.1.x tag, or code installed at another version.
+
+    The steps that compute the pilot's published numbers run only from the release that
+    holds their code and refuse any other checkout (pilot analysis, section "Order"; pilot
+    diagnostics, section "Order"). Releases are ordered by their numbers
+    (``newest_release``), so v0.1.10 is newer than v0.1.2. The environment must hold the
+    tag's own version, since the version line changes at each release and the environment
+    is built again then (engineering conventions, section 2).
+
+    Args:
+        git: The checkout, as ``git_state`` describes it.
+        installed: The version of the installed code (``installed_version``).
+        what: What runs, for the messages, such as "the analysis".
+        source: Where the rule is written, for the message when the clone has no release,
+            such as 'pilot analysis, section "Order"'.
+
+    Returns:
+        The newest release tag, at which the checkout stands.
+
+    Raises:
+        StepError: If the clone has no release tag, a tag cannot be ordered, the checkout is
+            not at the newest one, or the installed code has another version than its tag.
+    """
+    released = [str(tag) for tag in git.get("release_tags") or []]
+    if not released:
+        raise StepError(
+            f"no {RELEASE_TAGS} tag exists in the clone: {what} runs only from the release"
+            f" that holds its code ({source})"
+        )
+    newest = newest_release(released)  # refuses a tag that it cannot order
+    if newest not in {str(tag) for tag in git.get("tags") or []}:
+        raise StepError(
+            f"the checkout ({git.get('describe')}) is not at the newest release tag {newest}:"
+            f" {what} runs only from it (git checkout {newest} on OMNI, then bash"
+            " scripts/setup_omni_env.sh)"
+        )
+    if installed != newest.removeprefix("v"):
+        raise StepError(
+            f"the environment holds version {installed} of the code, not"
+            f" {newest.removeprefix('v')} of the tag {newest}: build it again at the tag (bash"
+            " scripts/setup_omni_env.sh)"
+        )
+    return newest
 
 
 def item_seed(seed: int, *keys: int | str) -> int:

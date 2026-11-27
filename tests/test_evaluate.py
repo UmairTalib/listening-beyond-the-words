@@ -1268,6 +1268,19 @@ def test_the_job_refuses_a_pinned_record_that_is_no_json_object(
     assert f"{run_name(*KEY)}: {message}" in failure(run_job(workspace))
 
 
+def test_the_job_checks_the_scores_pin_before_it_reads_the_record(
+    workspace: EvaluateWorkspace,
+) -> None:
+    # Two faults at once: the record's pin holds but its content is no JSON, and the scores
+    # do not match their pin. The pins are checked first, the record's, then the scores'.
+    (workspace.folder(KEY) / "run.json").write_text("{not json", encoding="utf-8")
+    workspace.pin(workspace.pinned())
+    workspace.evaluate["runs"]["b0"]["r1"]["f2"]["scores_sha256"] = "0" * 64
+    workspace.write_evaluate()
+    line = failure(run_job(workspace))
+    assert f"{run_name(*KEY)}: its scores.parquet does not match its pin (scores_sha256)" in line
+
+
 def test_the_job_refuses_zero_shot_scores_of_a_participant_without_a_label(
     workspace: EvaluateWorkspace,
 ) -> None:

@@ -4,11 +4,14 @@ Fold AUROCs and Spearman correlations are checked against counts over all pairs 
 scikit-learn and SciPy, the paired bootstrap against the repeated rows that its counts stand
 for, and the checks, the rule and its framing line at their exact bounds (pilot protocol,
 sections "Feasibility checks" and "Decision rule"; docs/pilot_analysis.md). Fake
-participant IDs start at 9001.
+participant IDs start at 9001; the label check, which accepts the pilot's sessions only,
+is tested on pilot IDs such as 300.
 """
 
 import copy
+import hashlib
 import itertools
+import json
 import math
 import warnings
 from fractions import Fraction
@@ -46,6 +49,8 @@ from listening_beyond_words.evaluation import (
     FoldRun,
     Number,
     Point,
+    RunPin,
+    checked_labels,
     draw_counts,
     draws_sha256,
     f2_reading,
@@ -58,9 +63,12 @@ from listening_beyond_words.evaluation import (
     kept_run,
     outcome,
     person_scores,
+    pinned_record,
+    pinned_record_data,
     pinned_version,
     point_values,
     printed,
+    record_object,
     resampled_means,
     run_order,
     standard_error,
@@ -509,6 +517,104 @@ def test_of_two_runs_of_a_fold_run_the_one_that_finished_first_is_the_earlier() 
     for record in ({}, {"finished_utc": None}, {"finished_utc": ""}, {"finished_utc": 3}):
         with pytest.raises(StepError, match=r"^runs/pilot/x: its run.json does not say when"):
             run_order(record, "runs/pilot/x")
+
+
+def test_a_pinned_record_is_read_by_its_sha256_alone_and_no_other_file(tmp_path: Path) -> None:
+    run = "runs/pilot/pilot-b0-r1-f1-20261126-101112"
+    folder = tmp_path / run
+    folder.mkdir(parents=True)
+    record = train_record()
+    data = json.dumps(record).encode("utf-8")
+    (folder / "run.json").write_bytes(data)
+    (folder / "scores.parquet").write_bytes(b"not a table")  # never opened
+    (folder / "scores.parquet").chmod(0)
+    pin = RunPin(run, "0" * 64, hashlib.sha256(data).hexdigest())
+    try:
+        assert pinned_record(tmp_path, pin) == record
+        # Its two steps: the bytes checked against the pin, then read as a JSON object.
+        assert pinned_record_data(tmp_path, pin) == data
+        assert record_object(data, run) == record
+    finally:
+        (folder / "scores.parquet").chmod(0o600)
+    # Another SHA-256, or no run.json at all (another fold-run's folder).
+    for other in (RunPin(run, "0" * 64, "1" * 64), RunPin(run[:-1] + "3", "0" * 64, "1" * 64)):
+        for read in (pinned_record, pinned_record_data):
+            with pytest.raises(StepError) as refused:
+                read(tmp_path, other)
+            assert (
+                str(refused.value)
+                == f"{other.run}: its run.json does not match its pin (record_sha256)"
+            )
+    for text, message in (
+        (b"{not json", "its run.json cannot be read as JSON"),
+        (b"\xff\xfe", "its run.json cannot be read as JSON"),
+        (b"[1, 2]", "its run.json is not a JSON object"),
+    ):
+        (folder / "run.json").write_bytes(text)
+        matching = RunPin(run, "0" * 64, hashlib.sha256(text).hexdigest())
+        assert pinned_record_data(tmp_path, matching) == text  # the pin holds ...
+        with pytest.raises(StepError) as refused:
+            pinned_record(tmp_path, matching)  # ... but the record is no JSON object
+        assert str(refused.value) == f"{run}: {message}"
+        with pytest.raises(StepError) as refused:
+            record_object(text, run)
+        assert str(refused.value) == f"{run}: {message}"
+
+
+def labels_table(sessions: list[int], totals: list[int]) -> pd.DataFrame:
+    """Pinned labels as the labels step writes them: label, gender and PHQ-8 total."""
+    return pd.DataFrame(
+        {
+            "label": [int(total >= 10) for total in totals],
+            "gender": ["female"] * len(sessions),
+            "phq8_total": totals,
+        },
+        index=pd.Index(sessions, name="session"),
+    )
+
+
+def test_the_label_check_returns_labels_and_totals_by_session_in_ascending_order() -> None:
+    labels, totals = checked_labels(labels_table([305, 300, 301], [12, 9, 10]))
+    assert labels.index.tolist() == totals.index.tolist() == [300, 301, 305]
+    assert labels.tolist() == [0, 1, 1]
+    assert totals.tolist() == [9, 10, 12]
+    assert (labels.name, totals.name, labels.index.name) == ("label", "phq8_total", "session")
+    assert labels.dtype == totals.dtype == labels.index.dtype == np.int64
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ("outside", "the pinned labels hold 1 participants outside the pilot's sessions"),
+        ("never_existed", "the pinned labels hold 1 participants outside the pilot's sessions"),
+        ("twice", "the pinned labels hold 0 participants outside the pilot's sessions, or a"),
+        ("floats", "the pinned labels and PHQ-8 totals are not stored as whole numbers"),
+        ("not_binary", "1 labels are not 0 or 1"),
+        ("disagrees", "1 labels disagree with their PHQ-8 totals: a participant is positive"),
+    ],
+)
+def test_the_label_check_refuses_other_sessions_and_labels_that_are_not_their_totals(
+    change: str, message: str
+) -> None:
+    sessions, totals = [300, 301, 302], [3, 10, 15]
+    if change == "outside":
+        sessions[2] = 600  # a test session of the final thesis
+    if change == "never_existed":
+        sessions[2] = 342
+    if change == "twice":
+        sessions[2] = 300
+    table = labels_table(sessions, totals)
+    if change == "floats":
+        table["phq8_total"] = table["phq8_total"].astype(float)
+    if change == "not_binary":
+        table.loc[301, "label"] = 2
+    if change == "disagrees":
+        table.loc[302, "label"] = 0  # a total of 15 is positive
+    with pytest.raises(StepError) as refused:
+        checked_labels(table)
+    assert str(refused.value).startswith(message)
+    for session in (300, 301, 302, 342, 600):  # counts only, never an ID
+        assert str(session) not in str(refused.value)
 
 
 # Person scores, fold AUROCs and Spearman correlations ---------------------------------------

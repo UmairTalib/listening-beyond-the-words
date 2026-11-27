@@ -17,22 +17,23 @@ word-check run are pinned in configs/pilot/data.yaml.
 
 Stages, in one process:
   1. Guards: a Slurm job; a clean checkout at the newest v0.1.x tag of the clone; the
-     installed code of that tag's version; evaluate.yaml read, a key given twice refused
-     (config.read_settings), with at least one run pinned. Then the run folder and run.json
-     (running).
-  2. The pins of the kept runs, before any score is read: each run's run.json and
-     scores.parquet by their SHA-256, its run.json listing that scores.parquet, and its
-     record (evaluation.kept_run: done, not started with --allow-dirty, check F1 passing,
-     the label and partition pins of data.yaml, from the first runs' commit or the newest
-     v0.1.x tag of its clone). Each pinned run must be the earliest done run of its
-     fold-run that counts (evaluation.run_order: the one that finished first), and a later
-     one is reported; only the other runs' records are read for this. The pinned set must
-     be one of the protocol's versions: all 30 runs, 25 (no B1 round 2), 20 (no B1) or 10
-     (B0 and CPG round 1 only).
+     installed code of that tag's version (runinfo.release_guard); evaluate.yaml read, a
+     key given twice refused (config.read_settings), with at least one run pinned. Then
+     the run folder and run.json (running).
+  2. The pins of the kept runs, before any score is read: each run's run.json
+     (evaluation.pinned_record_data) and scores.parquet by their SHA-256, then the record
+     read as a JSON object (evaluation.record_object) that lists that scores.parquet, and
+     the record's rules (evaluation.kept_run: done, not started with --allow-dirty, check
+     F1 passing, the label and partition pins of data.yaml, from the first runs' commit or
+     the newest v0.1.x tag of its clone). Each pinned run must be the earliest done run of
+     its fold-run that counts (evaluation.run_order: the one that finished first), and a
+     later one is reported; only the other runs' records are read for this. The pinned set
+     must be one of the protocol's versions: all 30 runs, 25 (no B1 round 2), 20 (no B1)
+     or 10 (B0 and CPG round 1 only).
   3. The pinned labels with their PHQ-8 totals, every label checked to be a total of 10 or
-     more, and the pinned partitions; then the bootstrap's draws (evaluation.draw_counts),
-     which need nothing else, so they exist before any score is read; run.json records
-     their SHA-256 and the redraws.
+     more (evaluation.checked_labels), and the pinned partitions; then the bootstrap's
+     draws (evaluation.draw_counts), which need nothing else, so they exist before any
+     score is read; run.json records their SHA-256 and the redraws.
   4. The checks that read no score: F1 on every kept run (stage 2); F2 on every kept CPG
      run, with the pooled share of the summed counts (evaluation.f2_reading); F4 from the
      pinned word-check run (scoring.embargo); F5 as the first CPG run of round 1, fold 1
@@ -90,7 +91,6 @@ import time
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -118,6 +118,7 @@ from listening_beyond_words.evaluation import (
     Resampled,
     RunPin,
     Version,
+    checked_labels,
     draw_counts,
     draws_sha256,
     f2_reading,
@@ -128,8 +129,10 @@ from listening_beyond_words.evaluation import (
     kept_run,
     outcome,
     person_scores,
+    pinned_record_data,
     point_values,
     printed,
+    record_object,
     resampled_means,
     run_order,
     standard_error,
@@ -137,22 +140,22 @@ from listening_beyond_words.evaluation import (
 from listening_beyond_words.labels import PHQ8_CUTOFF
 from listening_beyond_words.reports import write_table
 from listening_beyond_words.runinfo import (
-    RELEASE_TAGS,
+    PACKAGE,
     Progress,
     StepError,
     environment,
     git_state,
+    installed_version,
     item_seed,
-    newest_release,
     quiet_unraisable,
     record_failure,
+    release_guard,
     sha256_file,
     stop_on_sigterm,
     utc_now,
     write_json,
 )
 from listening_beyond_words.scoring import embargo
-from listening_beyond_words.sessions import PILOT_IDS
 from listening_beyond_words.settings import Workspace, get_workspace
 from listening_beyond_words.wordcheck import FAIL, PASS
 from listening_beyond_words.zeroshot import SCORE_COLUMNS, SCORES, load_zeroshot_scores
@@ -162,9 +165,10 @@ EVALUATE = Path("configs/pilot/evaluate.yaml")
 STEP = "evaluate"
 FULL = "full"
 TRIAL = "trial"
-PACKAGE = "listening-beyond-words"  # the installed code, whose version must be the tag's
 PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn", "pyarrow", "pyyaml", PACKAGE)
 USAGE = "usage: evaluate.py [--trial]"
+# The rule that the analysis runs only from its release (runinfo.release_guard).
+ORDER = 'pilot analysis, section "Order"'
 CHECKS_TABLE = "checks.csv"
 FOLD_TABLE = "fold_values.csv"
 SUMMARY_TABLE = "summary.csv"
@@ -201,49 +205,6 @@ def parse_arguments(argv: Sequence[str]) -> bool:
     parser = _Parser(prog="evaluate.py", add_help=False)
     parser.add_argument("--trial", action="store_true")
     return bool(parser.parse_args(list(argv)).trial)
-
-
-def installed_version() -> str:
-    """The version of the installed code, as the environment's metadata holds it."""
-    try:
-        return version(PACKAGE)
-    except PackageNotFoundError:
-        return "none (the package is not installed)"
-
-
-def release_guard(git: Mapping[str, Any]) -> tuple[str, str]:
-    """Refuse a checkout off the newest v0.1.x tag, or code installed at another version.
-
-    Pilot analysis, section "Order": the analysis runs from the release that holds its code,
-    and the job refuses any other checkout. Releases are ordered by their numbers
-    (``runinfo.newest_release``), so v0.1.10 is newer than v0.1.2. The environment must hold
-    the tag's own version, since the version line changes at each release and the
-    environment is built again then (engineering conventions, section 2).
-
-    Returns:
-        The tag and the installed version.
-    """
-    released = [str(tag) for tag in git.get("release_tags") or []]
-    if not released:
-        raise StepError(
-            f"no {RELEASE_TAGS} tag exists in the clone: the analysis runs only from the"
-            ' release that holds its code (pilot analysis, section "Order")'
-        )
-    newest = newest_release(released)  # refuses a tag that it cannot order
-    if newest not in {str(tag) for tag in git.get("tags") or []}:
-        raise StepError(
-            f"the checkout ({git.get('describe')}) is not at the newest release tag {newest}:"
-            f" the analysis runs only from it (git checkout {newest} on OMNI, then bash"
-            " scripts/setup_omni_env.sh)"
-        )
-    installed = installed_version()
-    if installed != newest.removeprefix("v"):
-        raise StepError(
-            f"the environment holds version {installed} of the code, not"
-            f" {newest.removeprefix('v')} of the tag {newest}: build it again at the tag (bash"
-            " scripts/setup_omni_env.sh)"
-        )
-    return newest, installed
 
 
 def exact(value: Fraction) -> dict[str, Any]:
@@ -324,7 +285,8 @@ def start(state: Progress) -> Job:
             "the checkout has uncommitted changes: the analysis runs only from a release, and"
             ' it has no --allow-dirty (pilot analysis, section "Order")'
         )
-    release, installed = release_guard(git)
+    installed = installed_version()
+    release = release_guard(git, installed, "the analysis", ORDER)
     content, evaluate_sha256 = read_settings(EVALUATE)
     settings = EvaluateSettings.from_config(content)
     pinned = settings.version
@@ -413,9 +375,12 @@ def pinned_run(
 ) -> Kept:
     """Check one pin of evaluate.yaml and its run's record; return the run if it counts.
 
-    The run's run.json and scores.parquet must have the SHA-256 that the pin gives, and the
-    run.json must list that scores.parquet as its own; then ``evaluation.kept_run`` reads the
-    record. No score is read here.
+    The run's run.json must have the SHA-256 that the pin gives
+    (``evaluation.pinned_record_data``), and so must its scores.parquet; the record must then
+    be a JSON object (``evaluation.record_object``) that lists that scores.parquet as its
+    own, and ``evaluation.kept_run`` reads it. The two steps of ``evaluation.pinned_record``,
+    the check of the record alone, sit on either side of the scores' check, in the order
+    that this job has always refused them. No score is read here.
 
     Args:
         workspace: The workspace.
@@ -431,20 +396,11 @@ def pinned_run(
         StepError: If a file does not match the pin, or the run does not count.
     """
     arm, round_number, fold = key
-    folder = workspace.root / pin.run
-    record_path = folder / "run.json"
-    data = record_path.read_bytes() if record_path.is_file() else None
-    if data is None or hashlib.sha256(data).hexdigest() != pin.record_sha256:
-        raise StepError(f"{pin.run}: its run.json does not match its pin (record_sha256)")
-    scores_path = folder / SCORES
+    data = pinned_record_data(workspace.root, pin)
+    scores_path = workspace.root / pin.run / SCORES
     if not scores_path.is_file() or sha256_file(scores_path) != pin.scores_sha256:
         raise StepError(f"{pin.run}: its {SCORES} does not match its pin (scores_sha256)")
-    try:
-        record = json.loads(data.decode("utf-8"))
-    except ValueError:
-        raise StepError(f"{pin.run}: its run.json cannot be read as JSON") from None
-    if not isinstance(record, dict):
-        raise StepError(f"{pin.run}: its run.json is not a JSON object")
+    record = record_object(data, pin.run)
     outputs = record.get("outputs")
     if not isinstance(outputs, Mapping) or outputs.get(SCORES) != pin.scores_sha256:
         raise StepError(f"{pin.run}: its run.json lists another {SCORES} than its pin")
@@ -578,9 +534,8 @@ def read_people(workspace: Workspace, config: Mapping[str, Any]) -> People:
     """The pinned labels with their PHQ-8 totals and the pinned partitions, checked.
 
     Every participant must be a pilot session, and every label must be 1 exactly where the
-    PHQ-8 total is 10 or more (pilot protocol, section "Speech used", bullet "Labels"; pilot
-    analysis, section "Data protection"). A refusal gives counts, never a participant's ID,
-    label or total.
+    PHQ-8 total is 10 or more (``evaluation.checked_labels``). A refusal gives counts, never
+    a participant's ID, label or total.
 
     Args:
         workspace: The workspace.
@@ -604,33 +559,7 @@ def read_people(workspace: Workspace, config: Mapping[str, Any]) -> People:
         # counts; any other error is named by its type.
         reason = str(error) if type(error) is ValueError else type(error).__name__
         raise StepError(f"the pinned labels and partitions do not hold: {reason}") from None
-    sessions = [int(session) for session in table.index]
-    outside = len(set(sessions) - set(PILOT_IDS))
-    if outside or len(set(sessions)) != len(sessions):
-        raise StepError(
-            f"the pinned labels hold {outside} participants outside the pilot's sessions, or a"
-            " participant twice"
-        )
-    if not all(pd.api.types.is_integer_dtype(table[name]) for name in ("label", "phq8_total")):
-        raise StepError(
-            "the pinned labels and PHQ-8 totals are not stored as whole numbers, as the labels"
-            " step writes them"
-        )
-    label = table["label"].to_numpy(dtype=np.int64)
-    total = table["phq8_total"].to_numpy(dtype=np.int64)
-    bad = int((~np.isin(label, (0, 1))).sum())
-    if bad:
-        raise StepError(f"{bad} labels are not 0 or 1")
-    disagree = int((label != (total >= PHQ8_CUTOFF).astype(np.int64)).sum())
-    if disagree:
-        raise StepError(
-            f"{disagree} labels disagree with their PHQ-8 totals: a participant is positive"
-            f" exactly when the total is {PHQ8_CUTOFF} or more (pilot analysis, section"
-            ' "Data protection")'
-        )
-    index = pd.Index(sessions, dtype=np.int64, name="session")
-    labels = pd.Series(label, index=index, name="label").sort_index()
-    totals = pd.Series(total, index=index, name="phq8_total").sort_index()
+    labels, totals = checked_labels(table)
     return People(labels, totals, partitions)
 
 

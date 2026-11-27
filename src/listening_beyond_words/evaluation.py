@@ -5,8 +5,11 @@ checks", "Decision rule" and "If time runs short", and ``docs/pilot_analysis.md`
 fills only the points that the protocol leaves open. The settings are in
 ``configs/pilot/evaluate.yaml`` (``EvaluateSettings``). This module holds:
 
-- the kept runs (``kept_run``), the earlier of two runs of one fold-run (``run_order``)
-  and the versions that the pinned set may be (``VERSIONS``);
+- the check of the pinned labels against the pilot's sessions and their PHQ-8 totals
+  (``checked_labels``);
+- the kept runs: a run's record checked against its pin alone (``pinned_record``), the
+  rules that let it count (``kept_run``), the earlier of two runs of one fold-run
+  (``run_order``) and the versions that the pinned set may be (``VERSIONS``);
 - the point estimates, exact: a participant's score is the mean z over all their segments
   of a view (``person_scores``), a fold's AUROC counts ties as one half (``fold_auroc``),
   and its Spearman correlation uses average ranks (``fold_spearman``); ``fold_runs``
@@ -47,7 +50,7 @@ from dataclasses import dataclass
 from decimal import Context, Decimal
 from fractions import Fraction
 from numbers import Rational
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Final, NamedTuple
 
@@ -65,6 +68,7 @@ from listening_beyond_words.runinfo import (
     item_seed,
     newest_release,
 )
+from listening_beyond_words.sessions import PILOT_IDS
 
 ZEROSHOT: Final = "zeroshot"
 ARMS: Final = (ZEROSHOT, "b0", "b1", "cpg")  # pilot protocol, design "Arms"
@@ -597,7 +601,134 @@ class EvaluateSettings:
         return np.random.default_rng(item_seed(self.seed, *BOOTSTRAP_KEYS))
 
 
+# The labels --------------------------------------------------------------------------------
+
+
+def checked_labels(table: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Check the pinned labels against the pilot's sessions and their PHQ-8 totals.
+
+    Every participant must be a pilot session, given once, and every label must be 1
+    exactly where the PHQ-8 total is 10 or more (pilot protocol, section "Speech used",
+    bullet "Labels"; pilot analysis, section "Data protection"). The jobs that read the
+    labels check them so before anything else. A refusal gives counts, never a
+    participant's ID, label or total.
+
+    Args:
+        table: The pinned labels with their totals (``clips.load_pinned_labels`` with
+            ``phq8_total=True``), indexed by session ID, with the columns ``label`` and
+            ``phq8_total``.
+
+    Returns:
+        Each participant's label and PHQ-8 total, as whole numbers, by session ID in
+        ascending order.
+
+    Raises:
+        StepError: If a participant lies outside the pilot's sessions or is given twice, a
+            label or total is not stored as a whole number, a label is not 0 or 1, or a
+            label disagrees with its total.
+    """
+    sessions = [int(session) for session in table.index]
+    outside = len(set(sessions) - set(PILOT_IDS))
+    if outside or len(set(sessions)) != len(sessions):
+        raise StepError(
+            f"the pinned labels hold {outside} participants outside the pilot's sessions, or a"
+            " participant twice"
+        )
+    if not all(pd.api.types.is_integer_dtype(table[name]) for name in ("label", "phq8_total")):
+        raise StepError(
+            "the pinned labels and PHQ-8 totals are not stored as whole numbers, as the labels"
+            " step writes them"
+        )
+    label = table["label"].to_numpy(dtype=np.int64)
+    total = table["phq8_total"].to_numpy(dtype=np.int64)
+    bad = int((~np.isin(label, (0, 1))).sum())
+    if bad:
+        raise StepError(f"{bad} labels are not 0 or 1")
+    disagree = int((label != (total >= PHQ8_CUTOFF).astype(np.int64)).sum())
+    if disagree:
+        raise StepError(
+            f"{disagree} labels disagree with their PHQ-8 totals: a participant is positive"
+            f" exactly when the total is {PHQ8_CUTOFF} or more (pilot analysis, section"
+            ' "Data protection")'
+        )
+    index = pd.Index(sessions, dtype=np.int64, name="session")
+    labels = pd.Series(label, index=index, name="label").sort_index()
+    totals = pd.Series(total, index=index, name="phq8_total").sort_index()
+    return labels, totals
+
+
 # Kept runs ---------------------------------------------------------------------------------
+
+
+def pinned_record_data(root: Path, pin: RunPin) -> bytes:
+    """Read a kept run's run.json as bytes, checked against its pin, and nothing else of the run.
+
+    Pilot analysis, section "Runs and pins", bullet "Pins": the record must have the SHA-256
+    that ``evaluate.yaml`` pins (``record_sha256``).
+
+    Args:
+        root: The workspace root, which the pinned run folder is relative to.
+        pin: The run's pin.
+
+    Returns:
+        The run.json's bytes.
+
+    Raises:
+        StepError: If the run.json is missing or does not match its pin. The message names
+            the rule and the run.
+    """
+    path = root / pin.run / "run.json"
+    data = path.read_bytes() if path.is_file() else None
+    if data is None or hashlib.sha256(data).hexdigest() != pin.record_sha256:
+        raise StepError(f"{pin.run}: its run.json does not match its pin (record_sha256)")
+    return data
+
+
+def record_object(data: bytes, run: str) -> dict[str, Any]:
+    """Read a run.json's bytes as a JSON object.
+
+    Args:
+        data: The run.json's bytes (``pinned_record_data``).
+        run: The run folder, relative to the workspace, for the messages.
+
+    Returns:
+        The record.
+
+    Raises:
+        StepError: If the bytes cannot be read as JSON or are not a JSON object.
+    """
+    try:
+        record = json.loads(data.decode("utf-8"))
+    except ValueError:
+        raise StepError(f"{run}: its run.json cannot be read as JSON") from None
+    if not isinstance(record, dict):
+        raise StepError(f"{run}: its run.json is not a JSON object")
+    return record
+
+
+def pinned_record(root: Path, pin: RunPin) -> dict[str, Any]:
+    """Read a kept run's run.json, checked against its pin, and nothing else of the run.
+
+    Pilot analysis, section "Runs and pins", bullet "Pins": the record must have the SHA-256
+    that ``evaluate.yaml`` pins (``record_sha256``) and be a JSON object
+    (``pinned_record_data``, then ``record_object``). This is the check of the record
+    alone: no scores file is opened, so a step that reads only the records, such as the
+    gain-term summary (pilot diagnostics, section "Gain-term summary", bullet "Records"),
+    uses it with ``kept_run``. The analysis job checks the scores against their pin between
+    the two steps, as it always has.
+
+    Args:
+        root: The workspace root, which the pinned run folder is relative to.
+        pin: The run's pin.
+
+    Returns:
+        The record, a JSON object.
+
+    Raises:
+        StepError: If the run.json is missing or does not match its pin, or is not a JSON
+            object. The message names the rule and the run.
+    """
+    return record_object(pinned_record_data(root, pin), pin.run)
 
 
 def _nested(record: Any, *keys: str) -> Any:

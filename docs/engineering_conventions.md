@@ -39,9 +39,9 @@ Inside the package:
 ```text
 settings.py      workspace paths, read from LBW_WORKSPACE
 runinfo.py       time, commit and tags, the order of the pilot's release tags and its first
-                 runs, per-item seeds, the seeds of a process, repeatable PyTorch kernels,
-                 file hashes, environment and GPU, run.json and error records without
-                 messages
+                 runs, the release guard and the installed code's version, per-item seeds,
+                 the seeds of a process, repeatable PyTorch kernels, file hashes,
+                 environment and GPU, run.json and error records without messages
 sessions.py      the 189 pilot sessions and the guard that refuses every other session
 labels.py        PHQ-8 labels of the pilot
 partitions.py    participants split into folds
@@ -80,11 +80,12 @@ bags.py          the bag sampler: the training participants' bags of each epoch 
 training.py      the model that trains (LoRA and the adapter copy), AdamW and the loss
                  scaler, one training step, the saved weights, the hand-over to the scoring
                  model, and the measures of the checks and rules read on the training logs
-evaluation.py    the analysis of the test scores: its settings, the kept runs and the earlier
-                 of two runs of a fold-run, exact participant scores and fold AUROCs,
-                 Spearman correlations, the paired bootstrap with its percentile intervals,
-                 checks F2 and F3, and the decision rule with its framing line; the word
-                 check shares its AUROC and percentile code
+evaluation.py    the analysis of the test scores: its settings, the check of the labels
+                 against their PHQ-8 totals, the kept runs (each record checked against its
+                 pin alone) and the earlier of two runs of a fold-run, exact participant
+                 scores and fold AUROCs, Spearman correlations, the paired bootstrap with
+                 its percentile intervals, checks F2 and F3, and the decision rule with its
+                 framing line; the word check shares its AUROC and percentile code
 reports.py       the writer of the tables of results: aggregate numbers at full precision,
                  refusing every column, index or cell that identifies a participant or a
                  segment
