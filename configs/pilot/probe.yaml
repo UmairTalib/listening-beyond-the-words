@@ -1,0 +1,25 @@
+# Settings of the pooled-encoder probe; see docs/pilot_diagnostics.md, section "Pooled-encoder
+# probe", which fills the points that the study design leaves open. Fixed on 2026-11-27, before
+# any number of the probe exists. The job also reads the pinned caches, x0 clips, word times,
+# labels and partitions (data.yaml); the opensmile settings of the voice measures stay in
+# data.yaml (word_check.voice), as the voice checks of x1 use them.
+
+views: [x0, x2, rev] # pilot diagnostics, section "Pooled-encoder probe", bullet "Inputs": x0 and x2 as the study design names them, and rev, added post hoc on 2026-11-27 (section "Departures from the study design")
+partition_round: 1 # bullet "Inputs": the probes use round 1's five folds, so no participant is split; the draws read the folds of both rounds (pilot analysis, section "Intervals", bullet "Draws")
+pooling: # bullet "Pooling": 2,560 features per segment, in float64
+  statistics: [mean, sd] # the mean and the population standard deviation of each of the encoder's 1,280 numbers over the kept vectors
+  kept: inside_parts # the vectors that start inside one of the segment's parts, the same in all three views, so the padding and the 300 ms gaps drop out
+targets: # bullet "Targets": one value per segment, measured on x0 and used for every view, as x2 and rev keep the timing, the loudness and the pitch range of x0
+  view: x0 # the targets' view
+  words: 40 # speech rate: these words over the summed span of the parts (pilot protocol, section "Fixed settings", row "Segments and bags": exactly 40 words)
+  pitch_variability: F0semitoneFrom27.5Hz_sma3nz_stddevNorm # opensmile 2.6.0 with eGeMAPSv02, by the rules of the voice checks (pilot protocol, section "Clip versions", bullet "Voice measures"): the copy at an RMS of 0.05, each part on its own, the parts weighted by voiced time
+  timing: word_times # speech rate and pause ratio from the pinned word times: each part spans from its first word's start to its last word's end, so the parts' margins stay out (section "Departures from the study design")
+controls: [gender, length, egemaps88] # bullet "Controls", with the same folds, model, penalty rule and draws: gender alone; length alone (the kept vectors' number n and 1/n), for every target; the 88 eGeMAPS measures of x0 as participant means, for the label only
+penalty: # bullet "Penalty": chosen inside each outer training set by inner cross-validation over its four folds, each left out once; a tie goes to the stronger penalty
+  ridge_alphas: [1.0e+0, 1.0e+1, 1.0e+2, 1.0e+3, 1.0e+4, 1.0e+5, 1.0e+6] # ridge α from 1 to 10⁶, one value per decade
+  logistic_cs: [1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1, 1.0e+0] # logistic C from 10⁻⁶ to 1, one value per decade
+  max_iter: 5000 # the solver's iteration limit, as for the word check's classifiers (data.yaml, word_check.leakage.max_iter and word_check.voice.probe_max_iter); an inner fit that does not converge within it skips its grid value and is counted, a final fit stops the job
+bootstrap: # bullet "Intervals": 80% and 95% percentile intervals by the pilot analysis's rule (section "Intervals"), the fitted probes fixed
+  resamples: 10000 # as the pilot analysis's draws (pilot protocol, fixed settings "Intervals")
+  seed: 111 # the draws' own stream: a seed no other step uses (101 to 109 are taken, and the power simulation uses 110)
+  levels: [0.8, 0.95] # NumPy's linear percentiles, as in the pilot analysis

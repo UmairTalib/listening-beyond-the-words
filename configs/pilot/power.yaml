@@ -1,0 +1,46 @@
+# Settings of the main study's power, simulated again with the pilot's numbers; see
+# docs/pilot_diagnostics.md, section "The main study's power", which fills the points that the
+# study design leaves open. Fixed on 2026-11-27, before any number of the simulation exists.
+# The simulation reads no participant data: its two input tables are constants of the job, read
+# from the checkout, never from the workspace, and pinned here by their SHA-256.
+
+inputs_sha256: # pilot diagnostics, section "The main study's power", bullet "Power": the published tables of the pilot's analysis (analysis job 12628714 at v0.1.1)
+  summary: 3038fb53727be4325267f0fdc2624f1a54297e1712aa57b177f6d83d2f878678 # reports/pilot/summary.csv
+  folds: 212fe103e57c0a281b1491c40c38e800f5201ef6e6d684ec8b4b42df150839b2 # reports/pilot/fold_values.csv
+views: [x0, rev] # bullet "Grid": x0, the test on normal audio, and rev, a stand-in for one of the unseen masks; the views are simulated apart
+main: # bullet "The main study", as the study design plans it: the same 189 people, with the pilot's class counts per fold
+  rounds: 3 # 3 new rounds ...
+  folds: 5 # ... of 5 folds stratified by label; Δ is the mean of the 15 per-fold differences
+  gains: # bullet "Grid": true gains from 0.00 to 0.10 in steps of 0.01, the same draws for every gain
+    first: 0.0
+    last: 0.1
+    step: 0.01
+  alpha: 0.05 # bullet "α": one-sided; every number at α/3, α/2 and α, as Holm's correction over the main study's three hypotheses gives the test on normal audio one of these levels, by its rank
+  holm_family: 3 # the three hypotheses: without words, with conflicting words and on normal audio
+green: # bullet "The pilot inside each study": Green if both hold (pilot protocol, sections "Feasibility checks" and "Decision rule")
+  f3_min_auroc: 0.6 # B0's mean AUROC on x0 is at least 0.60 (check F3)
+  delta_x0_at_least: 0.03 # Δ on x0 is at least +0.03 ("Green: beats B0")
+simulation: # bullets "Grid", "The main study" and "Which number sets what"
+  studies: 8000 # simulated studies per point: a Monte Carlo standard error of at most 0.006
+  blocks: 64 # the studies of a point in fixed blocks, each with its own stream, so that the tables do not depend on the number of workers
+  resamples: 2000 # the paired participant bootstrap's resamples per simulated study (the real test uses 10,000)
+  rho_points: 5 # ρ in 5 equal steps, from the smallest value that the agreement allows (r = 1) to 1
+  calibration_pilots: 2000 # simulated pilots per fit of r to the measured agreement
+  tolerance: 1.0e-3 # the model's mean agreement in the pilot's design must meet the measured one within 0.001, or the job stops; a sensitivity row that misses is reported as not reached
+  seed: 110 # the simulation's own streams: a seed no other step uses (101 to 109 are taken, and the probe uses 111)
+sensitivity: # bullet "Which number sets what", the sensitivity rows, at the middle ρ; their ends are read from summary.csv
+  at: middle_rho
+  rows: [agreement_80, b0_auroc_80, se_matched] # the agreement and B0's AUROC at the ends of their 80% intervals; r set to match Δ's bootstrap standard error instead of the agreement
+resample_check: # bullet "Checks first", check 2, on the study design's middle scenario
+  studies: 400 # studies at each of the two true gains
+  gains: [0.0, 0.06]
+  resamples: 10000 # the decisions at 2,000 resamples are compared with those at 10,000 ...
+  max_changed: 0.01 # ... and may differ in at most 1% of the studies at each α ...
+  fallback_resamples: 10000 # ... otherwise every table uses 10,000
+design_check: # bullet "Checks first", check 1: the model must reproduce the study design's figures, or the job stops as a code fault
+  b0_auroc: 0.65 # the study design's assumed AUROC of B0
+  scenarios: [[0.9, 0.85], [0.8, 0.75], [0.6, 0.65]] # (r, ρ): the study design's low, middle and high noise scenarios
+  pilots: 8000 # simulated pilots per scenario, as the study design ran them
+  pilot_sd: [0.026, 0.034, 0.041] # the standard deviation of the pilot's Δ in the three scenarios
+  one_arm_sd: 0.044 # one arm's one-round AUROC standard deviation, in the middle scenario
+  max_gap: 3.0e-3 # each figure within 0.003

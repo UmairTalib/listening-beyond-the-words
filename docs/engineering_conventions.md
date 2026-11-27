@@ -23,7 +23,8 @@ This file says how the repository is organised and how work moves from the Mac t
 .github/                     CI workflow and pull request template
 configs/<study>/             settings and pins: data.yaml (data, cut, clip versions, file
                              hashes) and models.yaml (model revisions)
-docs/                        pilot protocol, pilot analysis, these conventions and the glossary
+docs/                        pilot protocol, pilot analysis, pilot diagnostics, these
+                             conventions and the glossary
 reports/<study>/             aggregate results only: tables and figures (from the first results)
 scripts/                     one Python script per pipeline step, and shell scripts for OMNI
                              (download, unpack, environment)
@@ -115,7 +116,7 @@ espeak.py        the workspace espeak-ng for Kokoro's text front end
 - PyTorch comes from the PyTorch package index, through one of two extras. Use exactly one:
   - `cpu` on the Mac and in CI;
   - `cu126` on OMNI. It is the last CUDA build of PyTorch with V100 (sm_70) kernels. The PyPI build of the same version has none.
-- The `pipeline` extra adds the tools for clip building, the word check and the probe (Kokoro, faster-whisper, opensmile, Parselmouth). Only OMNI needs it. opensmile's licence allows research use, not commercial use.
+- The `pipeline` extra adds the tools for clip building, the word check and the pooled-encoder probe (Kokoro, faster-whisper and opensmile). Only OMNI needs it. It also holds Parselmouth, which no step uses: the probe measures pitch variability with opensmile and its timing targets from the word times ([`pilot_diagnostics.md`](pilot_diagnostics.md), section "Departures from the study design"). opensmile's licence allows research use, not commercial use.
 - jiwer, which computes the word error rate, and num2words, which writes out the numbers in the text of the re-voiced clip as misaki does, are in the main set, so that their tests run on the Mac and in CI.
 - `pyproject.toml` pins exact versions of the packages that can change the numbers: torch, torchaudio, transformers, peft, mistral-common and num2words, and the pipeline tools kokoro, misaki, faster-whisper, opensmile and en-core-web-sm. Ruff is pinned to match its git hook. The rest have lower bounds, and `uv.lock` pins them.
 - Add a dependency with `uv add --no-sync <package>`, then run `make env`. Upgrade a package on purpose with `uv lock --upgrade-package <package>`, in its own `build(deps)` commit. No upgrades between the settings freeze and the pilot report.
@@ -232,6 +233,13 @@ configs/pilot/evaluate.yaml   the analysis (docs/pilot_analysis.md): arms, test 
                               differences, bootstrap, F3's bound, the decision rule and
                               its framing line, the first runs' commit and, after
                               training, the pins of the kept runs
+configs/pilot/probe.yaml      the pooled-encoder probe (docs/pilot_diagnostics.md):
+                              views, partition round, pooling, targets, controls,
+                              penalty grids and bootstrap
+configs/pilot/power.yaml      the main study's power (docs/pilot_diagnostics.md): the
+                              input tables' SHA-256, views, the main study, the Green
+                              call, the simulation, the sensitivity rows and the two
+                              checks that come first
 ```
 
 ## 6. Paths and the workspace
@@ -303,7 +311,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 
 The data steps built so far record the fields that apply to them: `config` holds the file and its SHA-256, `settings` the values used, and `environment` the packages they use. `runinfo.write_json` writes a `run.json` in one step, to a temporary file that is then renamed onto it, so a step that dies while writing never leaves half of one; the merge of `x1` counts a run folder with a `run.json` as merged.
 
-- `train` and `evaluate` refuse to start when the checkout has uncommitted changes. `train` scores its own test fold, in the same job, right after it saves the weights (pilot protocol, section "Training", bullet "Scoring"), so there is no `score` step. `train`'s `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `evaluate` has none, because every run on OMNI reads real scores and labels: it is debugged on its synthetic tests. It also refuses any commit but the newest `v0.1.x` tag of the clone, and installed code of another version than that tag's, so every number of the analysis comes from released code; after a checkout of a new tag, run `bash scripts/setup_omni_env.sh` again, since the version line changes (section 2). `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
+- `train` and `evaluate` refuse to start when the checkout has uncommitted changes. `train` scores its own test fold, in the same job, right after it saves the weights (pilot protocol, section "Training", bullet "Scoring"), so there is no `score` step. `train`'s `--allow-dirty` option exists for debugging only: `run.json` records it, and pilot runs never use it. `evaluate` has none, because every run on OMNI reads real scores and labels: it is debugged on its synthetic tests. It also refuses any commit but the newest `v0.1.x` tag of the clone, and installed code of another version than that tag's, so every number of the analysis comes from released code. The three steps of the pilot's diagnostics refuse a checkout with uncommitted changes, any commit but the newest `v0.1.x` tag and installed code of another version too, so their numbers also come from released code ([`pilot_diagnostics.md`](pilot_diagnostics.md), section "Order"). After a checkout of a new tag, run `bash scripts/setup_omni_env.sh` again, since the version line changes (section 2). `submit.sh` refuses a dirty checkout too, and each job checks that the checkout has not moved since it was submitted. Do not pull on OMNI while pilot jobs wait or run.
 - Partitions are saved with their SHA-256 before any training. `configs/pilot/data.yaml` records the hashes, and training stops when a partition file does not match.
 - Settings freeze, after the training logs of the first CPG run of round 1, fold 1: the logged gain-alive rule (m to 0.5 or 0.1) and the 4-epoch rule are the only allowed changes, decided from training logs only. Each is made once, in one `exp(pilot)` commit, and applies to all arms. It is dated in the settings change log of [`pilot_protocol.md`](pilot_protocol.md) and in `CHANGELOG.md`, and sent to the supervisor in one line. Then release 0.1.0 as described in section 13: a `chore(release): 0.1.0` commit tagged `v0.1.0`. Until a `v0.1.x` tag exists, the train job refuses every run but the timing run, B0's round 1 and that first CPG run; once one exists, every pilot run, reruns of these included, must come from a checkout at the newest `v0.1.x` tag, so that every run after a release uses what it holds. No setting changes after test scores are seen, apart from these two rules and the pre-set fallbacks (8 segments for check F5; the flagged layers in fp32 after an overflow), which were fixed before any score. A fallback used after the freeze is dated in the same way, with its evidence, in one `exp(pilot)` commit released as the next `0.1.x`.
 
@@ -449,7 +457,7 @@ A change is done when one commit holds all of these:
 | Tag | Marks |
 | --- | --- |
 | `v0.1.0` | Pilot settings frozen, after the training logs of the first CPG run of round 1, fold 1 (section 8). Every later run uses the newest `0.1.x` tag. |
-| `v0.1.x` | The analysis code with its rules and the pins of the kept runs, released once training ends; fixes that change no method setting, for example in the analysis code; and a pre-set fallback used after the freeze (section 8) |
+| `v0.1.x` | The analysis code with its rules and the pins of the kept runs, released once training ends; the code of the pilot's diagnostics with their rules ([`pilot_diagnostics.md`](pilot_diagnostics.md)); fixes that change no method setting, for example in the analysis code; and a pre-set fallback used after the freeze (section 8) |
 | `v0.2.0` | Pilot report: aggregate results and the go / no-go decision |
 | `v0.3.0` and later | Main study: registration, frozen main runs, external test |
 | `v1.0.0` | The code and aggregate results of the submitted thesis |

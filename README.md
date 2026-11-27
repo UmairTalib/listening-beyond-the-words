@@ -69,9 +69,9 @@ Each value is the mean of 10 per-fold AUROCs. CPG − B0 is +0.047 on the origin
 ```text
 src/listening_beyond_words/   library code: data pipeline, clip versions, encoder caches, the CPG loss, training and the analysis of the test scores
 tests/                        unit tests on synthetic data
-configs/                      settings and pins: data.yaml, models.yaml, the shared training settings, one config per arm and the analysis settings (evaluate.yaml)
+configs/                      settings and pins: data.yaml, models.yaml, the shared training settings, one config per arm, the analysis settings (evaluate.yaml) and those of the diagnostics (probe.yaml, power.yaml)
 scripts/                      one Python script per pipeline step and shell scripts for OMNI; scripts/slurm/ holds the Slurm job files
-docs/                         pilot protocol, pilot analysis, engineering conventions and glossary
+docs/                         pilot protocol, pilot analysis, pilot diagnostics, engineering conventions and glossary
 ```
 
 ## Development
@@ -98,7 +98,7 @@ U. Oleh, U. Talib, M. A. Alam, and R. Obermaisser, "Leakage-Resilient Diarizatio
 
 ## Documentation
 
-See [`docs/README.md`](docs/README.md) for the pilot protocol, the pilot analysis, the engineering conventions and a glossary.
+See [`docs/README.md`](docs/README.md) for the pilot protocol, the pilot analysis, the pilot diagnostics, the engineering conventions and a glossary.
 
 ## Licence
 
