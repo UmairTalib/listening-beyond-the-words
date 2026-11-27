@@ -210,8 +210,9 @@ def test_the_settings_of_evaluate_yaml_load_with_exact_decimal_bounds() -> None:
         Fraction(2, 100),
     )
     assert settings.first_runs_commit == FIRST
-    assert dict(settings.runs) == {}
-    assert settings.version is None
+    assert len(settings.runs) == 30  # the kept training runs, pinned on 2026-11-27
+    assert settings.version is not None
+    assert settings.version.runs == 30
     assert settings.delta == ("cpg", "b0")
     assert settings.agreement == ("b0", "cpg")
 
