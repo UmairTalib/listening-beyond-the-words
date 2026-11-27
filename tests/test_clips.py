@@ -322,6 +322,13 @@ def test_the_pinned_readers_return_labels_sample_and_manifest(x1_workspace) -> N
     assert list(labels.columns) == ["label", "gender"]
     assert labels.loc[301, "label"] == 1
     assert labels.loc[300, "gender"] == "female"
+    # The analysis also reads the PHQ-8 total, from which the label comes.
+    totals = clips.load_pinned_labels(workspace, config, phq8_total=True)
+    assert list(totals.columns) == ["label", "gender", "phq8_total"]
+    assert totals[["label", "gender"]].equals(labels)
+    assert totals.loc[301, "phq8_total"] == 15
+    assert totals.loc[300, "phq8_total"] == 5
+    assert (totals["label"] == (totals["phq8_total"] >= 10).astype(int)).all()
     sample = clips.load_pinned_sample(workspace, config)
     assert sample["segment"].tolist() == ["300_001", "301_000"]
     manifest = clips.load_view_manifest(workspace, config, "x0")

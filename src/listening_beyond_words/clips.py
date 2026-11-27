@@ -157,22 +157,27 @@ def read_lines(sessions_dir: Path, session_id: int) -> list[str]:
     return [str(text) for text in read_transcript(transcript_path)["text"]]
 
 
-def load_pinned_labels(workspace: Workspace, config: dict) -> pd.DataFrame:
-    """The pinned labels: PHQ-8 class and gender of each pilot participant.
+def load_pinned_labels(
+    workspace: Workspace, config: dict, *, phq8_total: bool = False
+) -> pd.DataFrame:
+    """The pinned labels: PHQ-8 class and gender of each pilot participant, and the total if asked.
 
     Args:
         workspace: The workspace.
         config: The data config, with the ``labels`` pin.
+        phq8_total: Also return the PHQ-8 total, from which the label comes: the analysis
+            checks every label against it and correlates the participants' scores with it
+            (pilot analysis, sections "Also reported" and "Data protection").
 
     Returns:
         One row per participant, indexed by session ID, with the columns ``label`` (1 if
-        the PHQ-8 total is 10 or more) and ``gender``.
+        the PHQ-8 total is 10 or more) and ``gender``, and then ``phq8_total`` if asked.
 
     Raises:
         ValueError: If the file does not match its SHA-256.
     """
     labels = pd.read_parquet(_pinned_file(workspace, config["labels"], "labels.parquet"))
-    return labels[["label", "gender"]]
+    return labels[["label", "gender", "phq8_total"] if phq8_total else ["label", "gender"]]
 
 
 def load_pinned_sample(workspace: Workspace, config: dict) -> pd.DataFrame:

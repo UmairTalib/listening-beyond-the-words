@@ -44,17 +44,17 @@ import torch
 import yaml
 
 import wordcheck_fakes
-from listening_beyond_words import scoring, training, voxtral
+from listening_beyond_words import evaluation, scoring, training, voxtral
 from listening_beyond_words.bags import BagSampler, BagSettings, stream_seed, training_people
 from listening_beyond_words.cache import NUMERICS
-from listening_beyond_words.clips import MANIFEST_COLUMNS, write_view
+from listening_beyond_words.clips import MANIFEST_COLUMNS, load_pinned_labels, write_view
 from listening_beyond_words.config import load_arm
 from listening_beyond_words.loss import STEP_MEASURES
 from listening_beyond_words.models import load_pins
 from listening_beyond_words.runinfo import item_seed, sha256_file
 from listening_beyond_words.settings import Workspace
 from listening_beyond_words.wordcheck import FAIL, PASS
-from listening_beyond_words.zeroshot import SCORE_COLUMNS
+from listening_beyond_words.zeroshot import SCORE_COLUMNS, load_zeroshot_scores
 from voxtral_fakes import patch_processor, save_checkpoint, tiny_model
 from wordcheck_fakes import (
     GAP,
@@ -1426,6 +1426,56 @@ def test_the_scoring_gets_the_test_segments_and_no_label(finished: dict[str, Fin
             assert not (isinstance(value, dict) and "label" in value)
         for cache in caches.values():
             assert "label" not in cache.manifest.columns
+
+
+@pytest.mark.slow
+def test_the_analysis_job_reads_each_finished_run_as_a_kept_run_with_its_test_folds_scores(
+    finished: dict[str, Finished],
+) -> None:
+    """The contract between what the train job writes and what the analysis job reads.
+
+    Each finished run, pinned by its files, counts as a kept run (B0 and CPG of round 1 as
+    first runs at their commit, B1 at the release tag of its clone), and its scores hold
+    exactly its test fold's segments of x0 and rev, as the zero-shot scores name them.
+    """
+    evaluate = load_script("evaluate")
+    counts_by = {
+        "b0": "the first runs' commit ccccccc",
+        "b1": "the newest release tag of its clone, v0.1.0",
+        "cpg": "the first runs' commit ccccccc",
+    }
+    for arm, run in finished.items():
+        assert run.ended == "done", run.out
+        workspace = Workspace(run.workspace.root)
+        config = run.workspace.config
+        pin = evaluation.RunPin(
+            run.run.relative_to(workspace.root).as_posix(),
+            sha256_file(run.run / "scores.parquet"),
+            sha256_file(run.run / "run.json"),
+        )
+        kept = evaluate.pinned_run(workspace, (arm, 1, 1), pin, config, CLEAN["commit"])
+        assert kept.counts_by == counts_by[arm]
+        # The earlier of two runs of a fold-run is told by the time the run finished.
+        assert evaluation.run_order(kept.record, kept.run) == (kept.record["finished_utc"], pin.run)
+        zeroshot = load_zeroshot_scores(workspace, config)
+        test = fold_sessions(run.workspace, 1, 1)
+        segments = {}
+        for view in ("x0", "rev"):
+            rows = zeroshot[zeroshot["view"] == view]
+            segments[view] = {
+                str(segment): int(session)
+                for segment, session in zip(rows["segment"], rows["session"], strict=True)
+                if int(session) in test
+            }
+        labelled = {int(session) for session in load_pinned_labels(workspace, config).index}
+        scores = evaluate.read_scores(workspace, kept, segments, labelled)
+        assert list(scores) == ["x0", "rev"]
+        for values in scores.values():
+            assert list(values.index) == sorted(test)
+        if arm == "cpg":  # check F2 reads every CPG run, F5 the first of round 1, fold 1
+            reading = evaluation.f2_reading({kept.run: kept.record})
+            assert reading["pooled"]["bags"] == kept.record["results"]["rules"]["alive"]["bags"]
+            assert evaluate.f5_reading({("cpg", 1, 1): kept})["read_by"] == "reads_rules"
 
 
 # The timing run --------------------------------------------------------------------------------

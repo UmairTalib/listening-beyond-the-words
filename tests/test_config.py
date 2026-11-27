@@ -37,6 +37,7 @@ from listening_beyond_words.config import (
     TrainSettings,
     canonical_sha256,
     load_arm,
+    read_settings,
     resolve_config,
 )
 from listening_beyond_words.runinfo import StepError, sha256_file
@@ -457,6 +458,31 @@ def test_load_arm_refuses_files_that_do_not_read_as_one_level_of_extends(
     change(folder)
     with pytest.raises(StepError, match=f"^{re.escape(message)}"):
         load_arm(folder / arm)
+
+
+def test_read_settings_reads_a_file_that_extends_nothing_and_refuses_a_key_given_twice(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "evaluate.yaml"
+    shutil.copyfile(CONFIGS / "evaluate.yaml", path)
+    content, sha256 = read_settings(path)
+    assert content == yaml.safe_load((CONFIGS / "evaluate.yaml").read_text(encoding="utf-8"))
+    assert sha256 == sha256_file(CONFIGS / "evaluate.yaml")
+    # Two pins of one fold-run: PyYAML's own loader would keep the second without a word.
+    pin = "{run: runs/pilot/pilot-b0-r1-f1-20261126-101112, scores_sha256: a, record_sha256: b}"
+    twice = f"runs:\n  b0:\n    r1:\n      f1: {pin}\n      f1: {pin}\n"
+    path.write_text(twice, encoding="utf-8")
+    assert yaml.safe_load(twice)["runs"]["b0"]["r1"]["f1"]["run"].endswith("101112")
+    with pytest.raises(
+        StepError,
+        match=r"^evaluate\.yaml is not valid YAML: the key 'f1' is given twice \(line 5\)",
+    ):
+        read_settings(path)
+    path.write_text("- runs\n", encoding="utf-8")
+    with pytest.raises(StepError, match=r"^evaluate\.yaml must hold a mapping of named settings"):
+        read_settings(path)
+    with pytest.raises(StepError, match=r"^missing\.yaml is missing"):
+        read_settings(tmp_path / "missing.yaml")
 
 
 def test_the_resolver_refuses_zeroshot_yaml_setting_a_shared_key(folder: Path) -> None:

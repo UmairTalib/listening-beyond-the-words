@@ -16,7 +16,8 @@ the SHA-256 of its canonical JSON (``canonical_sha256``): it changes when a sett
 changes, never with the order of the keys, the comments or the YAML style. A refusal is a
 ``StepError`` that names the file, the key and the rule, so a typo stops a run before it
 starts. A key given twice in one mapping is refused too, where plain YAML readers keep
-the last one.
+the last one. ``read_settings`` reads a settings file that extends nothing, such as
+``configs/pilot/evaluate.yaml``, with the same refusals.
 """
 
 import dataclasses
@@ -748,6 +749,26 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
     if not isinstance(content, dict) or not all(isinstance(key, str) for key in content):
         raise StepError(f"{path.name} must hold a mapping of named settings")
     return content, hashlib.sha256(data).hexdigest()
+
+
+def read_settings(path: Path) -> tuple[dict[str, Any], str]:
+    """Read a settings file that extends no other, refusing a key given twice in a mapping.
+
+    For files such as ``configs/pilot/evaluate.yaml``, whose reader checks every key and
+    value itself: a key given twice, such as two pins of one fold-run, would otherwise keep
+    the last of the two without a word, as PyYAML's own loader does.
+
+    Args:
+        path: The file.
+
+    Returns:
+        Its content, a mapping of named settings, and the SHA-256 of its bytes, as read.
+
+    Raises:
+        StepError: If the file is missing, is not UTF-8 text or valid YAML, holds a key twice
+            in one mapping, or does not hold a mapping of named settings.
+    """
+    return _read(path)
 
 
 def canonical_sha256(content: Mapping[str, Any]) -> str:
