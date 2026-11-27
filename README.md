@@ -8,7 +8,7 @@ Author: Umair Talib · Supervisor: Ugonna Oleh
 
 [![CI](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/UmairTalib/listening-beyond-the-words/actions/workflows/ci.yml)
 
-> **Status (November 2026):** pilot study under way. The speech, its clip versions, the encoder caches, the training code and the zero-shot scores are done. B0's round 1 and the first CPG run have trained; the CPG run's training log changed no setting, and the settings are now frozen (version 0.1.0). The other 24 training runs come next, then the analysis. No results yet.
+> **Status (November 2026):** pilot study analysed. All 30 training runs finished and all five feasibility checks pass, and the analysis fixed in advance gives the outcome "Green: beats B0" (decision: go). The pilot's diagnostics and report come next, then the main study.
 
 ---
 
@@ -53,7 +53,16 @@ where $\hat z$ are standardised per-bag scores (running statistics with stop-gra
 
 ## Results
 
-No results yet. The pilot's aggregate results and the go / no-go decision will appear here and in `reports/pilot/`.
+**Pilot study** (189 E-DAIC participants, 2 rounds × 5 folds split by person; rules fixed in advance in [docs/pilot_protocol.md](docs/pilot_protocol.md) and [docs/pilot_analysis.md](docs/pilot_analysis.md); tables in [`reports/pilot/`](reports/pilot/)):
+
+| Arm | AUROC, original audio (`x0`) | AUROC, words removed (`rev`) |
+| --- | --- | --- |
+| Zero-shot Voxtral | 0.714 | 0.516 |
+| B0: standard LoRA fine-tuning | 0.657 | 0.541 |
+| B1: B0 with the re-voiced and muffled views | 0.648 | 0.551 |
+| CPG: B1 with the counterfactual paralinguistic gain | 0.705 | 0.550 |
+
+Each value is the mean of 10 per-fold AUROCs. CPG − B0 is +0.047 on the original audio and +0.009 with the words removed. The rule reads the point estimate on the original audio: at least +0.03 gives **Green: beats B0**. The 95% intervals (+0.018 to +0.079 and −0.032 to +0.049) cover the sampling of participants, not training noise, and are a check, not a test. The gain over B0 does not come mainly from the extra views: B1 − B0 is −0.010 on the original audio, while CPG − B1 is +0.057. On the original audio CPG (0.705) stays within 0.01 of zero-shot Voxtral (0.714), while B0 and B1 lie 0.056 and 0.066 below it (point estimates; no interval is computed for differences from the zero-shot arm); with the words removed every arm is close to chance. The pilot decides whether to go ahead; the main study, on new partitions, tests the claim.
 
 ## Repository layout
 

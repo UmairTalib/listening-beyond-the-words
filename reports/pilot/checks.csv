@@ -1,0 +1,17 @@
+check,scope,value,detail,bound,verdict
+F1,the 30 kept runs,30,kept runs whose record says that F1 passed (results.rules.f1.passes),every kept run passes,PASS
+F2,the 10 kept CPG runs,10,kept CPG runs whose gain-alive share passes F2,every kept CPG run passes,PASS
+F2,runs/pilot/pilot-cpg-r1-f1-20261126-055122,0.6594827586206896,459 of 696 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r1-f2-20261126-130259,0.6497093023255814,447 of 688 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r1-f3-20261126-130251,0.6430722891566265,427 of 664 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r1-f4-20261126-130251,0.6792168674698795,451 of 664 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r1-f5-20261126-130251,0.6726190476190477,452 of 672 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r2-f1-20261126-143323,0.6656976744186046,458 of 688 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r2-f2-20261126-143323,0.690406976744186,475 of 688 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r2-f3-20261126-143323,0.697289156626506,463 of 664 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r2-f4-20261126-143323,0.7027439024390244,461 of 656 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,runs/pilot/pilot-cpg-r2-f5-20261126-143323,0.6652298850574713,463 of 696 bags active in epochs 2 and 3,"0.20 to 0.80, both included, as each run read them (train.yaml, rules.alive)",PASS
+F2,pooled over the 10 kept CPG runs,0.6723730814639906,"4556 of 6776 bags, summed over the runs",reported only,reported only
+F3,B0's mean AUROC on x0 over its fold-runs,0.6572973322973323,exact 101513/154440; round 1 3621/5720; round 2 9569/14040,"at least 0.6, compared exactly",PASS
+F4,derived/wordcheck/run-12600674,PASS,verdicts.f4 of the pinned word-check run,PASS,PASS
+F5,runs/pilot/pilot-cpg-r1-f1-20261126-055122,1.0784865559588392,hours of training as the run read them (reads_rules),at most 4 hours,PASS

@@ -1,0 +1,2 @@
+fold_runs,delta_x0,delta_x0_exact,delta_rev,delta_rev_exact,outcome,decision,framing
+10,0.04746827246827247,7331/154440,0.008637658637658637,667/77220,Green: beats B0,Go,"framing: read; its condition does not hold, so the framing stays"
