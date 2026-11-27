@@ -76,6 +76,8 @@ bags.py          the bag sampler: the training participants' bags of each epoch 
 training.py      the model that trains (LoRA and the adapter copy), AdamW and the loss
                  scaler, one training step, the saved weights, the hand-over to the scoring
                  model, and the measures of the checks and rules read on the training logs
+evaluation.py    the AUROC and percentile code that the word check shares (pair wins,
+                 count-weighted fold AUROCs, linear percentiles)
 espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 

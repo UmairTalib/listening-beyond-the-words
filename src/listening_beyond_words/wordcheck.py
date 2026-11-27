@@ -16,10 +16,12 @@ are in ``configs/pilot/data.yaml`` (``word_check``). This module holds:
 - the verdicts of F4, the x0 control and the two rules of x1 (``Rules``, ``verdicts``).
 
 The voice measures, the ICC and the probe are in ``voicecheck.py``, the two recognisers in
-``recognisers.py``. Nothing here prints or stores participant text: errors name rules,
-counts and segment IDs only, and the classes and counts hold no words. The fitted
-classifiers hold participant words in their vocabulary and weights, so they are never
-printed or saved.
+``recognisers.py``. The pair wins, the AUROCs weighted by draw counts and the percentile
+interval come from ``evaluation.py``, which the analysis of the test scores shares.
+
+Nothing here prints or stores participant text: errors name rules, counts and segment IDs
+only, and the classes and counts hold no words. The fitted classifiers hold participant
+words in their vocabulary and weights, so they are never printed or saved.
 """
 
 import math
@@ -39,6 +41,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
+from listening_beyond_words.evaluation import interval, pair_wins, weighted_aurocs
 from listening_beyond_words.revoice import part_text, spoken_number, word_classes
 from listening_beyond_words.runinfo import StepError, item_seed
 from listening_beyond_words.transcripts import normalise
@@ -955,12 +958,6 @@ def person_scores(
     )
 
 
-def _pair_wins(positives: np.ndarray, negatives: np.ndarray) -> np.ndarray:
-    """1 where a positive scores above a negative, 0.5 where they tie, 0 below; (n_pos, n_neg)."""
-    above = (positives[:, None] > negatives[None, :]).astype(np.float64)
-    return above + 0.5 * (positives[:, None] == negatives[None, :])
-
-
 def _fold_members(
     scores: pd.Series, labels: pd.Series, folds: pd.Series
 ) -> list[tuple[int, np.ndarray, np.ndarray]]:
@@ -1000,7 +997,7 @@ def fold_aurocs(scores: pd.Series, labels: pd.Series, folds: pd.Series) -> np.nd
     values = scores.astype(np.float64).reindex(participants).to_numpy()
     return np.array(
         [
-            float(_pair_wins(values[positives], values[negatives]).mean())
+            float(pair_wins(values[positives], values[negatives]).mean())
             for _, positives, negatives in _fold_members(scores, labels, folds)
         ]
     )
@@ -1153,13 +1150,11 @@ def bootstrap_aurocs(
     )
     aurocs = []
     for fold, positives, negatives in _fold_members(scores, labels, folds):
-        wins = _pair_wins(values[positives], values[negatives])
-        weight_pos = counts[:, positives].astype(np.float64)
-        weight_neg = counts[:, negatives].astype(np.float64)
-        pairs = weight_pos.sum(axis=1) * weight_neg.sum(axis=1)
-        if not pairs.all():
+        drawn_pos, drawn_neg = counts[:, positives], counts[:, negatives]
+        if not (drawn_pos.sum(axis=1) * drawn_neg.sum(axis=1)).all():
             raise ValueError(f"a resample leaves fold {fold} with one class")
-        aurocs.append(((weight_pos @ wins) * weight_neg).sum(axis=1) / pairs)
+        wins = pair_wins(values[positives], values[negatives])
+        aurocs.append(weighted_aurocs(wins, drawn_pos, drawn_neg))
     return np.column_stack(aurocs)
 
 
@@ -1186,11 +1181,9 @@ def bootstrap_interval(
         ValueError: If the level does not lie strictly between 0 and 1, or as
             ``bootstrap_aurocs``.
     """
-    if not 0.0 < level < 1.0:
+    if not 0.0 < level < 1.0:  # before any AUROC is computed
         raise ValueError(f"the interval's level must lie between 0 and 1, got {level}")
-    means = bootstrap_aurocs(sets, scores, labels, folds).mean(axis=1)
-    low, high = np.quantile(means, [(1.0 - level) / 2.0, (1.0 + level) / 2.0], method="linear")
-    return float(low), float(high)
+    return interval(bootstrap_aurocs(sets, scores, labels, folds).mean(axis=1), level)
 
 
 # Verdicts ----------------------------------------------------------------------------
