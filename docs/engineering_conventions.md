@@ -82,6 +82,9 @@ evaluation.py    the analysis of the test scores: its settings, the kept runs an
                  Spearman correlations, the paired bootstrap with its percentile intervals,
                  checks F2 and F3, and the decision rule with its framing line; the word
                  check shares its AUROC and percentile code
+reports.py       the writer of the tables of results: aggregate numbers at full precision,
+                 refusing every column, index or cell that identifies a participant or a
+                 segment
 espeak.py        the workspace espeak-ng for Kokoro's text front end
 ```
 
@@ -265,7 +268,7 @@ Only code, configs, documentation and aggregate numbers go into git.
 
 - Never commit audio, transcripts, clip versions, features, caches, checkpoints, labels, partitions, segment manifests, per-person or per-segment scores, the USC download link, approval e-mails or secrets.
 - `.gitignore` and two hooks guard this. `forbid-data-files` blocks audio, tensor, checkpoint, archive and notebook files. `forbid-tables-outside-reports` blocks CSV, TSV and JSONL files outside `reports/`.
-- `reports/` holds aggregate numbers only: per-fold AUROC, means, intervals and figures. Report writers refuse columns that identify a person or a segment (`pid`, `segment_id`).
+- `reports/` holds aggregate numbers only: per-fold AUROC, means, intervals and figures. Every table of results is written by `reports.write_table`, which refuses a column named as an ID (`session`, `segment`, `pid`, `segment_id` and the like, in any case and spelling, such as `Session ID`) or by a number or a segment ID, a cell that holds a segment ID or no value, an index other than 0 to n − 1, and a file that exists already.
 - Sessions 600–718 are never opened or used before the external test. The download script fetches them and records their sizes and checksums; on OMNI they stay packed and locked (no read permission). Apart from the download and unpack scripts, all code that opens a session's files (recording and transcript) goes through `sessions.py`. Its `session_files` gives a session's paths only for the 189 pilot IDs (300–492 without 342, 394, 398 and 460) and raises an error for any other ID; `clips.read_session` reads a recording through it. The label files also hold rows of other sessions: `labels.py` reads them and keeps only the pilot IDs (`sessions.PILOT_IDS`) right after reading.
 - Labels come from the PHQ-8 total (10 or more), never from the binary column.
 - Data never leaves OMNI, except the clips of a listening check, copied to the Mac only to be heard. It never goes to external services, hosted notebooks or online trackers.
