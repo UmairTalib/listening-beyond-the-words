@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- 2026-11-27: the gain-term summary (login-node run of 2026-11-27 at v0.1.2): `reports/pilot/gain_terms.csv`, with the SHA-256 that its run recorded. It summarises what the 30 kept training runs logged per epoch (10 each of B0, B1 and CPG), as fixed in `docs/pilot_diagnostics.md` (section "Gain-term summary"); no rule reads it.
+
 ## [0.1.2] - 2026-11-27
 
 ### Added
