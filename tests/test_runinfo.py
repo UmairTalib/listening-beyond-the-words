@@ -443,6 +443,40 @@ def test_git_state_describes_commits_after_a_tag_and_a_dirty_checkout(clone: Pat
     assert state["describe"] == git(clone, "rev-parse", "--short", "HEAD")
 
 
+def test_release_tags_are_ordered_by_their_numbers_and_others_are_refused() -> None:
+    from listening_beyond_words.runinfo import StepError, newest_release, release_number
+
+    assert (release_number("v0.1.0"), release_number("v0.1.10")) == (0, 10)
+    assert max(["v0.1.10", "v0.1.2"]) == "v0.1.2"  # as text, v0.1.2 would be the newest
+    assert newest_release(["v0.1.10", "v0.1.2", "v0.1.0"]) == "v0.1.10"
+    assert newest_release(iter(["v0.1.0"])) == "v0.1.0"
+    for tag in ("v0.1.x", "v0.1.01", "v0.1.", "v0.1.2-rc1", "v0.1.3.1"):  # git's v0.1.* matches
+        with pytest.raises(StepError) as refused:
+            release_number(tag)
+        assert str(refused.value) == (
+            f"the tag {tag} matches v0.1.* but is no release v0.1.<number>: the release"
+            " guard cannot order it"
+        )
+    with pytest.raises(StepError, match=r"^the tag v0\.1\.x matches"):
+        newest_release(["v0.1.0", "v0.1.x"])
+    with pytest.raises(ValueError, match=r"^no v0\.1\.\* tag to order$"):
+        newest_release([])
+
+
+def test_the_first_runs_are_b0s_round_1_and_cpgs_round_1_fold_1() -> None:
+    from listening_beyond_words.runinfo import FIRST_RUNS, is_first_run
+
+    assert FIRST_RUNS == (("b0", 1, None), ("cpg", 1, 1))
+    first = {
+        (arm, number, fold)
+        for arm in ("b0", "b1", "cpg")
+        for number in (1, 2)
+        for fold in range(1, 6)
+        if is_first_run(arm, number, fold)
+    }
+    assert first == {("b0", 1, fold) for fold in range(1, 6)} | {("cpg", 1, 1)}
+
+
 # The machine ---------------------------------------------------------------------------------
 
 

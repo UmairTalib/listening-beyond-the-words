@@ -10,11 +10,12 @@ import json
 import numbers
 import platform
 import random
+import re
 import signal
 import subprocess
 import sys
 import traceback
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -39,6 +40,15 @@ def utc_stamp() -> str:
 
 
 RELEASE_TAGS: Final = "v0.1.*"  # the pilot's releases: v0.1.0 freezes its settings
+# A release tag: v0.1.<number>, ordered by its number, so v0.1.10 comes after v0.1.2, which
+# the order of the text would put first. RELEASE_TAGS also matches tags such as v0.1.x.
+RELEASE: Final = re.compile(r"v0\.1\.(0|[1-9][0-9]*)")
+# The first runs, which may run before the settings freeze (pilot protocol, section
+# "Training", bullet "Order, release tag and fallbacks"): B0's round 1, and CPG's round 1,
+# fold 1, whose training logs decide the two allowed rules, as (arm, round, fold), where
+# None means every fold. The training job lets them run before any release tag exists, and
+# the analysis keeps them from their commit (``is_first_run``).
+FIRST_RUNS: Final = (("b0", 1, None), ("cpg", 1, 1))
 
 
 def git_state() -> dict[str, object]:
@@ -70,6 +80,68 @@ def git_state() -> dict[str, object]:
         "tags": names(git("tag", "--points-at", "HEAD")),
         "release_tags": names(git("tag", "--list", RELEASE_TAGS)),
     }
+
+
+def release_number(tag: str) -> int:
+    """Return the number of a pilot release tag, by which releases are ordered: 10 for v0.1.10.
+
+    Engineering conventions, section 13: every run after a release uses the newest
+    ``v0.1.x`` tag, and v0.1.10 is newer than v0.1.2.
+
+    Args:
+        tag: A tag that ``RELEASE_TAGS`` matches, such as one of ``git_state``'s
+            ``release_tags``.
+
+    Returns:
+        The tag's release number.
+
+    Raises:
+        StepError: If the tag is no release v0.1.<number>, such as ``v0.1.x`` or
+            ``v0.1.01``, which ``RELEASE_TAGS`` matches as well.
+    """
+    found = RELEASE.fullmatch(tag)
+    if found is None:
+        raise StepError(
+            f"the tag {tag} matches {RELEASE_TAGS} but is no release v0.1.<number>: the"
+            " release guard cannot order it"
+        )
+    return int(found.group(1))
+
+
+def newest_release(tags: Iterable[str]) -> str:
+    """Return the newest of the pilot's release tags, ordered by their numbers.
+
+    Args:
+        tags: Release tags, such as ``git_state``'s ``release_tags``, in any order.
+
+    Returns:
+        The tag with the highest release number (``release_number``).
+
+    Raises:
+        StepError: If a tag is no release v0.1.<number> (``release_number``).
+        ValueError: If there is no tag.
+    """
+    released = [str(tag) for tag in tags]
+    if not released:
+        raise ValueError(f"no {RELEASE_TAGS} tag to order")
+    return max(released, key=release_number)
+
+
+def is_first_run(arm: str, round_number: int, fold: int) -> bool:
+    """Return whether a fold-run is one of the first runs, which ran before the freeze.
+
+    Args:
+        arm: The arm, such as ``b0``.
+        round_number: The round.
+        fold: The fold.
+
+    Returns:
+        True for every fold of B0's round 1 and for CPG's round 1, fold 1 (``FIRST_RUNS``).
+    """
+    return any(
+        (arm, round_number) == (first_arm, first_round) and first_fold in (None, fold)
+        for first_arm, first_round, first_fold in FIRST_RUNS
+    )
 
 
 def item_seed(seed: int, *keys: int | str) -> int:

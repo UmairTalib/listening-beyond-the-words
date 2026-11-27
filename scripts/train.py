@@ -115,7 +115,6 @@ import json
 import logging
 import math
 import os
-import re
 import socket
 import statistics
 import sys
@@ -160,9 +159,12 @@ from listening_beyond_words.runinfo import (
     environment,
     git_state,
     gpu_facts,
+    is_first_run,
+    newest_release,
     peak_memory_gb,
     quiet_unraisable,
     record_failure,
+    release_number,
     seed_everything,
     sha256_file,
     stop_on_sigterm,
@@ -216,10 +218,8 @@ USAGE = (
     "usage: train.py --config configs/pilot/<arm>.yaml --round <round> --fold <fold>"
     " [--timing] [--allow-dirty] [--verbose]"
 )
-# The first runs, which may run before the settings freeze (pilot protocol, section
-# "Training", bullet "Order, release tag and fallbacks"): B0's round 1, and CPG's round 1,
-# fold 1, whose training logs decide the two allowed rules. The timing run is the latter.
-FIRST_RUNS = (("b0", 1, None), ("cpg", 1, 1))
+# The first runs, which may run before the settings freeze, are runinfo.FIRST_RUNS: B0's
+# round 1, and CPG's round 1, fold 1, whose training logs decide the two allowed rules.
 # CPG's round 1, fold 1: the training logs of its first run that finishes decide the
 # gain-alive rule, the 4-epoch rule and check F5, and those of its rerun at 8 segments after
 # F5 failed there at 16 decide F5 alone (pilot protocol, section "Training", bullets "F2 and
@@ -232,8 +232,6 @@ FULL_SEGMENTS = 16
 FALLBACK_SEGMENTS = 8
 # The verdicts a run may read beside check F1 (training.rule_measures).
 READS = ("reads_f2", "reads_rules", "reads_f5")
-# A release tag: v0.1.<number>, which the release guard orders by its number.
-RELEASE = re.compile(r"v0\.1\.(0|[1-9][0-9]*)")
 TIMING = "train_timing"  # the timing run writes derived/train_timing/run-<job id>/run.json only
 METRICS = "metrics.jsonl"
 RUN_LOG = "run.log"
@@ -316,13 +314,11 @@ def release_guard(git: Mapping[str, Any], arm: str, round_number: int, fold: int
     be the newest v0.1.x, ordered by its number: a fallback used after the freeze is
     released as the next v0.1.x, and every later run uses it (bullet "Overflow in
     training"), so a checkout of an older release is refused as well.
+    ``runinfo.newest_release`` orders the releases.
     """
     released = [str(tag) for tag in git.get("release_tags") or []]
     if not released:
-        if any(
-            (arm, round_number) == (first_arm, first_round) and first_fold in (None, fold)
-            for first_arm, first_round, first_fold in FIRST_RUNS
-        ):
+        if is_first_run(arm, round_number, fold):
             return "no v0.1.x tag yet: one of the first runs (B0's round 1, CPG's round 1, fold 1)"
         raise StepError(
             f"no {RELEASE_TAGS} tag exists yet: before the settings freeze only B0's round 1"
@@ -330,16 +326,7 @@ def release_guard(git: Mapping[str, Any], arm: str, round_number: int, fold: int
             f" {arm} round {round_number}, fold {fold} (pilot protocol, section"
             ' "Training", bullet "Order, release tag and fallbacks")'
         )
-    numbers: dict[str, int] = {}
-    for tag in released:
-        found = RELEASE.fullmatch(tag)
-        if found is None:
-            raise StepError(
-                f"the tag {tag} matches {RELEASE_TAGS} but is no release v0.1.<number>: the"
-                " release guard cannot order it"
-            )
-        numbers[tag] = int(found.group(1))
-    newest = max(released, key=numbers.__getitem__)
+    newest = newest_release(released)  # refuses a tag that it cannot order
     at_head = set(map(str, git.get("tags") or [])) & set(released)
     if not at_head:
         raise StepError(
@@ -349,7 +336,7 @@ def release_guard(git: Mapping[str, Any], arm: str, round_number: int, fold: int
         )
     if newest not in at_head:
         raise StepError(
-            f"the checkout is at {', '.join(sorted(at_head, key=numbers.__getitem__))}, not at"
+            f"the checkout is at {', '.join(sorted(at_head, key=release_number))}, not at"
             f" the newest release tag {newest}: every run after a release uses it, with any"
             f" fallback released after the freeze (git checkout {newest} on OMNI)"
         )

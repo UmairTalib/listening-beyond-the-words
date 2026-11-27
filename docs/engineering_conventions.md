@@ -37,9 +37,10 @@ Inside the package:
 
 ```text
 settings.py      workspace paths, read from LBW_WORKSPACE
-runinfo.py       time, commit and tags, per-item seeds, the seeds of a process, repeatable
-                 PyTorch kernels, file hashes, environment and GPU, run.json and error
-                 records without messages
+runinfo.py       time, commit and tags, the order of the pilot's release tags and its first
+                 runs, per-item seeds, the seeds of a process, repeatable PyTorch kernels,
+                 file hashes, environment and GPU, run.json and error records without
+                 messages
 sessions.py      the 189 pilot sessions and the guard that refuses every other session
 labels.py        PHQ-8 labels of the pilot
 partitions.py    participants split into folds
