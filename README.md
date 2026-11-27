@@ -58,7 +58,7 @@ No results yet. The pilot's aggregate results and the go / no-go decision will a
 ## Repository layout
 
 ```text
-src/listening_beyond_words/   library code: data pipeline, clip versions, encoder caches, the CPG loss and training (evaluation to come)
+src/listening_beyond_words/   library code: data pipeline, clip versions, encoder caches, the CPG loss, training and the analysis of the test scores
 tests/                        unit tests on synthetic data
 configs/                      settings and pins: data.yaml, models.yaml, the shared training settings, one config per arm and the analysis settings (evaluate.yaml)
 scripts/                      one Python script per pipeline step and shell scripts for OMNI; scripts/slurm/ holds the Slurm job files
