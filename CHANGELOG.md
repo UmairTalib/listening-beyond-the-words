@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-27
+
 ### Added
 
 - The pins of the 30 kept training runs in `configs/pilot/evaluate.yaml` (`runs`), listed on 2026-11-27 by `scripts/list_runs.py` on OMNI once training had ended: every run of B0, B1 and CPG in both rounds, each by its folder and the SHA-256 of its `scores.parquet` and of its `run.json`; the config test pins them, and the analysis job checks each against its files before it reads anything.

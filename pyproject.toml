@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "listening-beyond-words"
-version = "0.1.1.dev0"
+version = "0.1.1"
 description = "Counterfactual paralinguistic gain (CPG) for LoRA fine-tuning of an audio LLM for depression detection"
 readme = "README.md"
 requires-python = "==3.12.*"
