@@ -895,6 +895,7 @@ dependencies = [
     { name = "scipy" },
     { name = "soundfile" },
     { name = "soxr" },
+    { name = "threadpoolctl" },
     { name = "transformers" },
 ]
 
@@ -951,6 +952,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.18" },
     { name = "soundfile", specifier = ">=0.13" },
     { name = "soxr", specifier = ">=1.0" },
+    { name = "threadpoolctl", specifier = ">=3.8" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'cu126'", specifier = "==2.14.1", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "listening-beyond-words", extra = "cu126" } },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'cu126'", specifier = "==2.14.1" },
     { name = "torch", marker = "extra == 'cpu'", specifier = "==2.14.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "listening-beyond-words", extra = "cpu" } },
