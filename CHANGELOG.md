@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- 2026-11-26: the rules of the pilot analysis are fixed in the new `docs/pilot_analysis.md` and `configs/pilot/evaluate.yaml`, every value with its source, before any AUROC of any arm is computed, because the pilot protocol leaves seven points of the analysis open. The page fills only those points and changes none of the protocol's rules, and the protocol page stays frozen. It comes after the first test scores existed but before any number from them used a label, so the rule that still holds is the protocol's: nothing is tuned after results that use the labels. Participant scores and fold AUROCs are exact fractions; every mean over fold-runs gets an 80% and a 95% percentile interval from one set of paired draws with a seed of its own (109), and each difference a bootstrap standard error; the checks that read no score come first, the zero-shot and B0 scores with check F3 next, and B1's and CPG's scores are opened only once all five checks pass, a failed F2 or F3 stopping the analysis before any Δ; each kept run is pinned by its folder and the SHA-256 of its scores and its record, and the pinned set must be one of the protocol's versions; a trial reads only the zero-shot scores and B0's round 1; and the analysis runs only from the release that holds its code. The docs index lists the page, and the glossary gains "Bootstrap", "Percentile interval" and "Spearman correlation".
+
 ## [0.1.0] - 2026-11-26
 
 ### Added

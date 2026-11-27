@@ -1,0 +1,24 @@
+# Settings of the pilot's analysis; see docs/pilot_analysis.md, which fills only the points
+# that docs/pilot_protocol.md leaves open. Fixed on 2026-11-26, before any AUROC of any arm
+# is computed. The job also reads the pinned labels, partitions and zero-shot scores
+# (data.yaml) and the kept training runs pinned below (runs).
+
+arms: [zeroshot, b0, b1, cpg] # pilot protocol, design "Arms"; each arm's AUROC is the mean of its 10 per-fold AUROCs, the zero-shot arm's too (pilot analysis, section "The main numbers")
+views: [x0, rev] # pilot protocol, design "Test views": the two views that every arm scored (train.yaml, scoring.views)
+differences: [[cpg, b0], [b1, b0], [cpg, b1]] # first minus second, fold by fold on the same participants, averaged over the 10 fold-runs: Δ = CPG − B0 (pilot protocol, design "Main numbers"), then B1 − B0 and CPG − B1 (design "Also reported")
+bootstrap: # pilot analysis, section "Intervals": participants drawn with replacement within each PHQ-8 class; one draw serves both rounds, every arm and both views
+  resamples: 10000 # pilot protocol, fixed settings "Intervals"
+  seed: 109 # the draws' stream: runinfo.item_seed(109, "evaluate", "bootstrap"); a seed no other step uses (pilot analysis, section "Intervals", bullet "Draws")
+  levels: [0.8, 0.95] # 80% and 95% intervals (pilot protocol, design "Main numbers"): percentile intervals with NumPy's linear percentiles, as in the word check (pilot analysis, section "Intervals", bullet "Intervals")
+checks: # pilot protocol, section "Feasibility checks"; F2's bounds stay in train.yaml (rules.alive), where each CPG run read them
+  f3_min_auroc: 0.6 # F3: B0's mean AUROC on x0 is at least 0.60, compared exactly (pilot analysis, section "Decision rule")
+rule: # pilot protocol, section "Decision rule": read on the point estimates of Δ on x0 and rev, compared exactly
+  green_at_least: 0.03 # "Green: beats B0" if Δ on x0 is at least +0.03; "Green: robust without words" if Δ on x0 lies strictly between the two bounds and Δ on rev is at least +0.03
+  red_at_most: -0.04 # "Red: worse on normal audio" if Δ on x0 is at most −0.04; "Amber: no visible effect" if Δ on x0 lies strictly between the two bounds and Δ on rev is below +0.03
+framing: # pilot analysis, section "Decision rule", bullet "Where a gain comes from": read only in "Green: beats B0"; it changes the framing, not the decision
+  view: x0 # both differences below are read on x0
+  cpg_gain_at_least: 0.03 # CPG − B0 reaches +0.03, as the outcome "Green: beats B0" says ...
+  b1_gain_at_least: 0.03 # ... B1 − B0 also reaches +0.03 ...
+  cpg_over_b1_below: 0.02 # ... and CPG − B1 stays below +0.02: then the gain comes mainly from the extra clips
+first_runs_commit: "271cce6d31e6c30fd10353649b246893882aaea2" # pilot protocol, section "Training", result on 2026-11-26: B0's round 1 and the first CPG run of round 1, fold 1 ran at this commit, before the v0.1.0 tag; every other kept run comes from the newest v0.1.x tag of its checkout (pilot analysis, section "Runs and pins", bullet "Kept runs")
+runs: {} # pinned after training (pilot analysis, section "Runs and pins", bullet "Pins"): <arm>: {r<round>: {f<fold>: {run, scores_sha256, record_sha256}}}

@@ -23,7 +23,7 @@ This file says how the repository is organised and how work moves from the Mac t
 .github/                     CI workflow and pull request template
 configs/<study>/             settings and pins: data.yaml (data, cut, clip versions, file
                              hashes) and models.yaml (model revisions)
-docs/                        pilot protocol, these conventions and the glossary
+docs/                        pilot protocol, pilot analysis, these conventions and the glossary
 reports/<study>/             aggregate results only: tables and figures (from the first results)
 scripts/                     one Python script per pipeline step, and shell scripts for OMNI
                              (download, unpack, environment)
@@ -217,6 +217,10 @@ configs/pilot/b0.yaml         extends train.yaml: cross-entropy on x0
 configs/pilot/b1.yaml         extends train.yaml: cross-entropy on x0, x1 and x2
 configs/pilot/cpg.yaml        extends train.yaml: B1 plus the gain term
 configs/pilot/zeroshot.yaml   extends train.yaml: scoring only
+configs/pilot/evaluate.yaml   the analysis (docs/pilot_analysis.md): arms, test views,
+                              differences, bootstrap, F3's bound, the decision rule and
+                              its framing line, the first runs' commit and, after
+                              training, the pins of the kept runs
 ```
 
 ## 6. Paths and the workspace

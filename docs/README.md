@@ -5,6 +5,7 @@ These pages explain how the project runs and how its results are checked. More p
 | Page | Read it to |
 | --- | --- |
 | [Pilot protocol](pilot_protocol.md) | see how the pilot runs and how its result is read |
+| [Pilot analysis](pilot_analysis.md) | see how the pilot's test scores become its AUROCs, differences, intervals and outcome |
 | [Engineering conventions](engineering_conventions.md) | write code, configs, jobs, commits and docs in the project's style |
 
 The thesis gives the motivation, the related work and the complete study design.
@@ -20,6 +21,7 @@ The thesis gives the motivation, the related work and the complete study design.
 | B0 | Standard LoRA fine-tuning on the original audio (`x0`). |
 | B1 | Fine-tuning on `x0`, `x1` and `x2` with cross-entropy only (gain weight 0). |
 | Bag | Four segments of one participant. The gain term is computed per bag. |
+| Bootstrap | A way to see how much a number depends on who took part. The participants are drawn again with replacement, within each PHQ-8 class, many times (10,000 in the pilot), and the number is computed again on each draw. A participant drawn twice counts twice. |
 | Cache | The frozen encoder's output, saved once per segment and view, in fp16, before the adapter. |
 | Chunk | 30 s of audio, the most that Voxtral's audio encoder reads at once. Each clip is padded with silence to a whole number of chunks, so a clip of 37.4 s fills two. The encoder turns each chunk into 1,500 vectors. |
 | CPG | Counterfactual paralinguistic gain: B1 plus the gain term. "Paralinguistic" means everything in speech beyond the words, such as pitch, timing, loudness and voice quality. |
@@ -38,10 +40,12 @@ The thesis gives the motivation, the related work and the complete study design.
 | Participant | One interviewed person, with one interview session. Some pages say person. |
 | Participant score | The mean of z over all of a participant's segments. |
 | Part | A run of a segment's words from one transcript line with nothing cut out between them, and their audio. In a clip, parts are joined by 300 ms of silence. |
+| Percentile interval | An interval read from the bootstrap's values: the 80% interval runs from their 10th to their 90th percentile, the 95% interval from the 2.5th to the 97.5th. The pilot uses NumPy's linear percentiles. |
 | PHQ-8 | An eight-item depression questionnaire. A total of 10 or more is the positive label here. |
 | Re-voiced clip | `x1`: the segment's words read part by part by Kokoro-82M, a text-to-speech model, in a synthetic voice of the participant's gender. The words stay; the participant's voice is gone. |
 | Reversed clip | `rev`: like the original clip, but each part is played backwards in 250 ms windows before it gets its fades, so that the words are removed (check F4). Pitch and voice quality stay. Used for testing only. |
 | Segment | Exactly 40 consecutive words of one participant, with their audio. |
+| Spearman correlation | The correlation of ranks: +1 when ordering participants by one value, such as their score, gives the same order as ordering them by another, such as their PHQ-8 total; 0 when the two orders are unrelated; −1 when one is the other reversed. Tied values share their average rank. |
 | Step | One update of the trained weights, from 4 bags: 2 of PHQ-8-positive participants and 2 of PHQ-8-negative ones. A step whose update the loss scaler skips still counts. |
 | Stop-gradient | A value that the loss uses but that training does not change through this term. |
 | Study | A set of runs with one protocol: the pilot now, the main study later. |
