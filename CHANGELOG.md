@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-27
+
 ### Added
 
 - 2026-11-27: the pilot's results (analysis job 12628714 at v0.1.1): the four tables in `reports/pilot/` (`checks.csv`, `fold_values.csv`, `summary.csv` and `outcome.csv`), each with the SHA-256 that the job recorded, and the result in the pilot protocol (section "Decision rule"). All five checks pass; Δ = CPG − B0 is 0.0475 on `x0` and 0.0086 on `rev`, so the outcome is "Green: beats B0" (go). The README's Status gives the outcome, and its Results the main numbers.
